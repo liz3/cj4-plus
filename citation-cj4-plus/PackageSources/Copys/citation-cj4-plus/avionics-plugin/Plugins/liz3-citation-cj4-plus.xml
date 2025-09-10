@@ -1,0 +1,6 @@
+<Plugins>
+
+  <Plugin target="WT21_FMC">
+    coui://html_ui/liz3-citation-cj4-plugin/plugin.js
+  </Plugin>
+</Plugins>

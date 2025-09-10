@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AssetPackage Version="0.1.0">
+	<ItemSettings>
+		<ContentType>MISC</ContentType>
+		<Title>Citation CJ4 Plus</Title>
+		<Manufacturer/>
+		<Creator>Liz3</Creator>
+	</ItemSettings>
+	<Flags>
+		<VisibleInStore>false</VisibleInStore>
+		<CanBeReferenced>false</CanBeReferenced>
+	</Flags>
+	<PackageOrderHint>CUSTOM_INSTRUMENT</PackageOrderHint>
+	<AssetGroups>
+		<AssetGroup Name="ContentInfo">
+			<Type Version="0">ContentInfo</Type>
+			<Flags>
+				<FSXCompatibility>false</FSXCompatibility>
+			</Flags>
+			<AssetDir>PackageDefinitions\liz3-citation-cj4-plus\ContentInfo\</AssetDir>
+			<OutputDir>ContentInfo\liz3-citation-cj4-plus\</OutputDir>
+		</AssetGroup>
+		<AssetGroup Name="avionics-plugin">
+			<Type Version="0">Copy</Type>
+			<Flags>
+				<FSXCompatibility>false</FSXCompatibility>
+			</Flags>
+			<AssetDir>PackageSources\Copys\citation-cj4-plus\avionics-plugin\</AssetDir>
+			<OutputDir>html_ui\</OutputDir>
+		</AssetGroup>
+		<AssetGroup Name="module">
+			<Type Version="0">Copy</Type>
+			<Flags>
+				<FSXCompatibility>false</FSXCompatibility>
+			</Flags>
+			<AssetDir>PackageSources\Copys\citation-cj4-plus\module\</AssetDir>
+			<OutputDir>modules\</OutputDir>
+		</AssetGroup>
+	</AssetGroups>
+</AssetPackage>
+

@@ -1,0 +1,110 @@
+import {
+  WT21FmcAvionicsPlugin,
+  RouteMenuPage,
+  StringInputFormat,
+  SimpleStringFormat,
+} from "@microsoft/msfs-wt21-fmc";
+import msfsSdk, {
+  AbstractFmcPageExtension,
+  FlightPlanSegmentType,
+  Subject,
+} from "@microsoft/msfs-sdk";
+import wt21Shared from "@microsoft/msfs-wt21-shared";
+
+class PerfInitPageExtension extends AbstractFmcPageExtension {
+  constructor(page) {
+    super(page);
+    this.simbriefId = Subject.create(GetStoredData("cj4_plus_simbrief_id"));
+    this.fetchSimbrief = new msfsSdk.DisplayField(page, {
+      formatter: new SimpleStringFormat("<LOAD UPLNK"),
+      onSelected: async () => {
+        return this.loadAndInsertPerf(page, this.simbriefId.get());
+      },
+    });
+    page.bus
+      .getSubscriber()
+      .on("simbrief_id")
+      .handle((v) => {
+        this.simbriefId.set(v);
+      });
+  }
+  async loadAndInsertPerf(page, id) {
+    try {
+      const response = await fetch(
+        `https://www.simbrief.com/api/xml.fetcher.php?json=1&userid=${id}`,
+      );
+      const json = await response.json();
+      const fms = page.fms;
+      const { weights } = json;
+      const pax = Number.parseInt(weights.pax_count_actual);
+      const paxWeight = Number.parseFloat(weights.pax_weight);
+      if (pax > 0) {
+        //CAPT
+        SimVar.SetSimVarValue(
+          "PAYLOAD STATION WEIGHT:1",
+          "kilograms",
+          paxWeight,
+        );
+      }
+      if (pax > 1) {
+        //FO
+        SimVar.SetSimVarValue(
+          "PAYLOAD STATION WEIGHT:2",
+          "kilograms",
+          paxWeight,
+        );
+      }
+      if (pax > 2) {
+        //FRONT
+        SimVar.SetSimVarValue(
+          "PAYLOAD STATION WEIGHT:3",
+          "kilograms",
+          paxWeight * (pax > 3 ? 2 : 1),
+        );
+      }
+      if (pax > 4) {
+        //MAIN
+        SimVar.SetSimVarValue(
+          "PAYLOAD STATION WEIGHT:4",
+          "kilograms",
+          paxWeight * (pax - 4),
+        );
+      }
+
+      const cargo = Number.parseInt(weights.cargo);
+      SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:5", "kilograms", cargo /2);
+      SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:6", "kilograms", cargo /1);
+
+      const fuel = Number.parseInt(json.fuel.plan_ramp) / 2;
+      const ratio = SimVar.GetSimVarValue(
+        "FUEL WEIGHT PER GALLON",
+        "kilograms",
+      );
+      SimVar.SetSimVarValue(
+        "FUEL TANK LEFT MAIN QUANTITY",
+        "gallons",
+        fuel / ratio,
+      );
+      SimVar.SetSimVarValue(
+        "FUEL TANK RIGHT MAIN QUANTITY",
+        "gallons",
+        fuel / ratio,
+      );
+
+      fms.performancePlanProxy.cruiseAltitude.set(
+        Number.parseInt(json.general.initial_altitude),
+      );
+      fms.performancePlanProxy.cargoWeight.set(cargo * 2.2);
+      fms.performancePlanProxy.paxNumber.set(pax);
+      fms.performancePlanProxy.averagePassengerWeight.set(paxWeight * 2.2);
+      return "";
+    } catch (err) {
+      throw "UPKLNK LOAD FAILED";
+    }
+  }
+  onPageRendered(renderedTemplates) {
+    const elem = this.simbriefId.get();
+    if (elem) renderedTemplates[0][12][0] = this.fetchSimbrief;
+  }
+}
+export default PerfInitPageExtension;
