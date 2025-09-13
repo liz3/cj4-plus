@@ -82,6 +82,9 @@ const poll = (state) => {
       if (response.ok) {
         response.text().then((raw) => {
           for (const message of parseMessages(raw)) {
+            if(message.from === state.callsign && message.type === "inforeq"){
+              continue;
+            }
             messageStateUpdate(state, message);
             if (message.type === "cpdlc" && message.cpdlc.ra) {
               message.response = async (code) => {
@@ -248,7 +251,7 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
       state.active_station,
       addMessage(
         state,
-        `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl} DUE TO ${{ weather: "weather", performance: "aicraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
       ),
       "cpdlc",
     );
@@ -263,7 +266,7 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
       state.active_station,
       addMessage(
         state,
-        `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aicraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
       ),
       "cpdlc",
     );
@@ -278,7 +281,7 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
       state.active_station,
       addMessage(
         state,
-        `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aicraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
       ),
       "cpdlc",
     );
