@@ -1,6 +1,6 @@
 import * as esbuild from 'esbuild'
 
-await esbuild.build({
+const ctx = await esbuild.context({
 entryPoints: ['src/app.mjs'],
 bundle: true,
 minify: false,
@@ -28,3 +28,4 @@ jsxFragment: 'FSComponent.Fragment',
   outfile: '../citation-cj4-plus/PackageSources/Copys/citation-cj4-plus/avionics-plugin/liz3-citation-cj4-plugin/plugin.js',
   external: ["@microsoft/msfs-sdk", "@microsoft/msfs-wt21-fmc", "@microsoft/msfs-wt21-shared"]
 })
+await ctx.watch();

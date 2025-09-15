@@ -16,6 +16,7 @@ import msfsSdk, {
   Subject,
 } from "@microsoft/msfs-sdk";
 import { convertUnixToHHMM } from "./Hoppie.mjs";
+import { fetchAcarsMessages } from "./AcarsService.mjs";
 
 export class DatalinkSendMessagesPage extends WT21FmcPage {
   constructor(
@@ -55,6 +56,31 @@ export class DatalinkSendMessagesPage extends WT21FmcPage {
         this.messages.set(current);
         this.invalidate();
       });
+
+    fetchAcarsMessages(this.bus, "send").then((messages) => {
+      for (const message of messages) {
+        const current = this.messages.get();
+        const entry = {
+          message,
+          link: PageLinkField.createLink(
+            this,
+            `<${message.content.substr(0, 23)}`,
+            "/datalink-extra/message",
+            false,
+            {
+              message,
+            },
+          ),
+        };
+        if (current[current.length - 1].length < 5) {
+          current[current.length - 1].unshift(entry);
+        } else {
+          current.unshift([entry]);
+        }
+        this.messages.set(current);
+      }
+      this.invalidate();
+    });
   }
 
   render() {
@@ -120,6 +146,45 @@ export class DatalinkReceivedMessagesPage extends WT21FmcPage {
         this.messages.set(current);
         this.invalidate();
       });
+    this.bus
+      .getSubscriber()
+      .on("acars_message_state_update")
+      .handle((e) => {
+        const current = this.messages.get();
+
+        for (const row of current) {
+          const msg = row.find((t) => t.message._id === e.id);
+          if (msg) {
+            msg.respondSend = e.option;
+            break;
+          }
+        }
+        this.messages.set(current);
+      });
+    fetchAcarsMessages(this.bus, "recv").then((messages) => {
+      for (const message of messages) {
+        const current = this.messages.get();
+        const entry = {
+          message,
+          link: PageLinkField.createLink(
+            this,
+            `<${message.content.substr(0, 23)}`,
+            "/datalink-extra/message",
+            false,
+            {
+              message,
+            },
+          ),
+        };
+        if (current[current.length - 1].length < 5) {
+          current[current.length - 1].unshift(entry);
+        } else {
+          current.unshift([entry]);
+        }
+        this.messages.set(current);
+      }
+      this.invalidate();
+    });
   }
 
   render() {
@@ -161,8 +226,31 @@ export class DatalinkMessagePage extends WT21FmcPage {
     super(bus, screen, props, fms, baseInstrument, renderCallback);
     this.clockField = FmcCmuCommons.createClockField(this, this.bus);
     this.options = [];
+
+    this.updateHandler = bus
+      .getSubscriber()
+      .on("acars_message_state_update")
+      .handle((e) => {
+        const message = this.params.get("message");
+        if (message && e.id === message._id) {
+          message.respondSend = e.option;
+          this.options = [
+            ...message.options.map((e) => (message.respondSend === e ? e : "")),
+          ];
+          this.invalidate();
+        }
+      });
   }
 
+  onDestroy() {
+    this.updateHandler.destroy();
+  }
+  onPause() {
+    this.updateHandler.pause();
+  }
+  onResume() {
+    this.updateHandler.resume();
+  }
   render() {
     const message = this.params.get("message");
     let messageLines = 9;
@@ -184,11 +272,16 @@ export class DatalinkMessagePage extends WT21FmcPage {
                   },
                 },
                 onSelected: async () => {
-                  message.response(opt);
-                  this.options = [
-                    ...message.options.map((e) => (opt === e ? e : "")),
-                  ];
-                  this.invalidate();
+                  if (message.respondSend) return true;
+                  this.bus.getPublisher().pub(
+                    "acars_message_ack",
+                    {
+                      option: opt,
+                      id: message._id,
+                    },
+                    true,
+                    false,
+                  );
                   return true;
                 },
               }).bind(Subject.create(opt)),
@@ -196,7 +289,7 @@ export class DatalinkMessagePage extends WT21FmcPage {
           }
         } else {
           this.options = [
-            ...message.options.map((e) => (e.respondSend === e ? e : "")),
+            ...message.options.map((e) => (message.respondSend === e ? e : "")),
           ];
         }
       }
@@ -300,16 +393,19 @@ export class DatalinkAtisPage extends WT21FmcPage {
         },
       },
       onSelected: async () => {
-        const client = this.props.acarsClient.get();
-        if (this.send.get() && client) {
-          const res = await client.atisRequest(
-            this.facility.get(),
-            this.opts[this.reqType.get()],
+        if (this.send.get()) {
+          this.bus.getPublisher().pub(
+            "acars_message_send",
+            {
+              key: "atisRequest",
+              arguments: [this.facility.get(), this.opts[this.reqType.get()]],
+            },
+            true,
+            false,
           );
-          if (res) {
-            [this.facility].forEach((e) => e.set(""));
-            this.checkReady();
-          }
+
+          [this.facility].forEach((e) => e.set(""));
+          this.checkReady();
         }
         return true;
       },
@@ -400,29 +496,35 @@ export class DatalinkPreDepartureRequestPage extends WT21FmcPage {
         },
       },
       onSelected: async () => {
-        const client = this.props.acarsClient.get();
-        if (this.send.get() && client) {
+        if (this.send.get()) {
           const freeText = Array(4)
             .fill()
             .map((_, i) => this[`freeText${i}`].get())
             .filter((e) => e && e.length)
             .join(" ");
-          const res = await client.sendPdc(
-            this.facility.get(),
-            this.dep.get(),
-            this.arr.get(),
-            this.gate.get(),
-            this.atis.get(),
-            convertUnixToHHMM(Date.now()),
-            freeText,
+          this.bus.getPublisher().pub(
+            "acars_message_send",
+            {
+              key: "sendPdc",
+              arguments: [
+                this.facility.get(),
+                this.dep.get(),
+                this.arr.get(),
+                this.gate.get(),
+                this.atis.get(),
+                convertUnixToHHMM(Date.now()),
+                freeText,
+              ],
+            },
+            true,
+            false,
           );
-          if (res) {
-            [this.atis, this.facility, this.gate].forEach((e) => e.set(""));
-            const freeText = Array(4)
-              .fill()
-              .forEach((_, i) => this[`freeText${i}`].set(""));
-            this.checkReady();
-          }
+
+          [this.atis, this.facility, this.gate].forEach((e) => e.set(""));
+          Array(4)
+            .fill()
+            .forEach((_, i) => this[`freeText${i}`].set(""));
+          this.checkReady();
         }
         return true;
       },
@@ -653,36 +755,42 @@ export class DatalinkOceanicRequestPage extends WT21FmcPage {
         },
       },
       onSelected: async () => {
-        const client = this.props.acarsClient.get();
-        if (this.send.get() && client) {
+        if (this.send.get()) {
           const freeText = Array(4)
             .fill()
             .map((_, i) => this[`freeText${i}`].get())
             .filter((e) => e && e.length)
             .join(" ");
-          const res = await client.sendOceanicClearance(
-            this.flightId.get(),
-            this.facility.get(),
-            this.entryPoint.get(),
-            this.time.get(),
-            this.fltLvl.get(),
-            this.mach.get(),
-            freeText,
+          this.bus.getPublisher().pub(
+            "acars_message_send",
+            {
+              key: "sendOceanicClearance",
+              arguments: [
+                this.flightId.get(),
+                this.facility.get(),
+                this.entryPoint.get(),
+                this.time.get(),
+                this.fltLvl.get(),
+                this.mach.get(),
+                freeText,
+              ],
+            },
+            true,
+            false,
           );
-          if (res) {
-            [
-              this.facility,
-              this.entryPoint,
-              this.time,
-              this.fltLvl,
-              this.mach,
-            ].forEach((e) => e.set(""));
-            const freeText = Array(4)
-              .fill()
-              .forEach((_, i) => this[`freeText${i}`].set(""));
 
-            this.checkReady();
-          }
+          [
+            this.facility,
+            this.entryPoint,
+            this.time,
+            this.fltLvl,
+            this.mach,
+          ].forEach((e) => e.set(""));
+          Array(4)
+            .fill()
+            .forEach((_, i) => this[`freeText${i}`].set(""));
+
+          this.checkReady();
         }
         return true;
       },
@@ -894,21 +1002,26 @@ export class DatalinkTelexPage extends WT21FmcPage {
           },
         },
         onSelected: async () => {
-          const client = this.props.acarsClient.get();
-          if (this.send.get() && client) {
+          if (this.send.get()) {
             const freeText = Array(7)
               .fill()
               .map((_, i) => this[`freeText${i}`].get())
               .filter((e) => e && e.length)
               .join(" ");
-            const res = await client.sendTelex(this.facility.get(), freeText);
-            if (res) {
-              [this.facility].forEach((e) => e.set(""));
-              const freeText = Array(7)
-                .fill()
-                .forEach((_, i) => this[`freeText${i}`].set(""));
-              this.checkReady();
-            }
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendTelex",
+                arguments: [this.facility.get(), freeText],
+              },
+              true,
+              false,
+            );
+            [this.facility].forEach((e) => e.set(""));
+            Array(7)
+              .fill()
+              .forEach((_, i) => this[`freeText${i}`].set(""));
+            this.checkReady();
           }
           return true;
         },

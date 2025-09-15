@@ -27,6 +27,7 @@ import {
 } from "./DatalinkPages.mjs";
 import { createClient } from "./Hoppie.mjs";
 import PerfInitPageExtension from "./PerfPageExtension.mjs";
+import acarsService from "./AcarsService.mjs";
 
 class Plugin extends WT21FmcAvionicsPlugin {
   constructor(binder) {
@@ -49,7 +50,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
       DatalinkPreDepartureRequestPage,
       undefined,
       {
-        acarsClient: this.acarsClient,
+        
       },
     );
 
@@ -58,7 +59,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
       DatalinkOceanicRequestPage,
       undefined,
       {
-        acarsClient: this.acarsClient,
+        
       },
     );
 
@@ -67,7 +68,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
       DatalinkSendMessagesPage,
       undefined,
       {
-        acarsClient: this.acarsClient,
+       
       },
     );
 
@@ -76,7 +77,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
       DatalinkReceivedMessagesPage,
       undefined,
       {
-        acarsClient: this.acarsClient,
+       
       },
     );
 
@@ -85,7 +86,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
       DatalinkTelexPage,
       undefined,
       {
-        acarsClient: this.acarsClient,
+       
       },
     );
 
@@ -94,7 +95,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
       DatalinkAtisPage,
       undefined,
       {
-        acarsClient: this.acarsClient,
+      
       },
     );
 
@@ -103,7 +104,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
       DatalinkMessagePage,
       undefined,
       {
-        acarsClient: this.acarsClient,
+        
       },
     );
 
@@ -112,38 +113,9 @@ class Plugin extends WT21FmcAvionicsPlugin {
     context.attachPageExtension(DataLinkMenuPage, DatalinkPageExtension);
     context.attachPageExtension(PerfInitPage, PerfInitPageExtension);
 
-
-    wt21Shared.FmcUserSettings.getManager(this.binder.bus)
-      .getSetting("flightNumber")
-      .sub((value) => {
-        if (!value || !value.length) {
-          const current = this.acarsClient.get();
-          if (current) {
-            current.dispose();
-          }
-          this.acarsClient.set(null);
-          return;
-        }
-        this.acarsClient.set(
-          createClient(
-            GetStoredData("cj4_plus_hoppie_code"),
-            value,
-            "C25C",
-            (message) => {
-              if (message.type === "send") {
-                this.binder.bus
-                  .getPublisher()
-                  .pub("acars_outgoing_message", message);
-              } else {
-                this.binder.bus
-                  .getPublisher()
-                  .pub("acars_incoming_message", message);
-                  SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
-              }
-            },
-          ),
-        );
-      });
+    if(this.binder.isPrimaryInstrument){
+      this.client = acarsService(this.binder.bus);
+    }
   }
 }
 msfsSdk.registerPlugin(Plugin);

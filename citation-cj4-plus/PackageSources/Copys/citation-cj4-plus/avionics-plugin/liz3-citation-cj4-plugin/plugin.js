@@ -43,7 +43,7 @@
   // src/app.mjs
   var import_msfs_wt21_fmc6 = __require("@microsoft/msfs-wt21-fmc");
   var import_msfs_sdk6 = __toESM(__require("@microsoft/msfs-sdk"), 1);
-  var import_msfs_wt21_shared4 = __toESM(__require("@microsoft/msfs-wt21-shared"), 1);
+  var import_msfs_wt21_shared5 = __toESM(__require("@microsoft/msfs-wt21-shared"), 1);
 
   // src/CduRenderer.mjs
   var MF_CAPT_URL = "ws://localhost:8320/winwing/cdu-captain";
@@ -411,7 +411,7 @@
 
   // src/DatalinkPages.mjs
   var import_msfs_wt21_fmc4 = __require("@microsoft/msfs-wt21-fmc");
-  var import_msfs_wt21_shared2 = __toESM(__require("@microsoft/msfs-wt21-shared"), 1);
+  var import_msfs_wt21_shared3 = __toESM(__require("@microsoft/msfs-wt21-shared"), 1);
   var import_msfs_sdk4 = __toESM(__require("@microsoft/msfs-sdk"), 1);
 
   // src/Hoppie.mjs
@@ -496,6 +496,10 @@
         if (response.ok) {
           response.text().then((raw) => {
             for (const message of parseMessages(raw)) {
+              if (message.from === state.callsign && message.type === "inforeq") {
+                continue;
+              }
+              message._id = state.idc++;
               messageStateUpdate(state, message);
               if (message.type === "cpdlc" && message.cpdlc.ra) {
                 message.response = async (code) => {
@@ -507,13 +511,14 @@
                   sendAcarsMessage(
                     state,
                     message.from,
-                    `/data2/${state._min_count}/${message.cpdlc.mrn}/${code === "STANDBY" ? "NE" : "N"}/${code}`,
+                    `/data2/${state._min_count}/${message.cpdlc.min}/${code === "STANDBY" ? "NE" : "N"}/${code}`,
                     "cpdlc"
                   );
                 };
                 message.options = responseOptions(message.cpdlc.ra);
                 message.respondSend = null;
               }
+              state.message_stack[message._id] = message;
               state._callback(message);
             }
             poll(state);
@@ -529,7 +534,8 @@
       type: "send",
       content,
       from: state.callsign,
-      ts: Date.now()
+      ts: Date.now(),
+      _id: state.idc++
     });
     return content;
   };
@@ -549,7 +555,9 @@
       active_station: null,
       pending_station: null,
       _min_count: 0,
-      aircraft: aicraftType
+      aircraft: aicraftType,
+      idc: 0,
+      message_stack: {}
     };
     state.dispose = () => {
       if (state._interval) clearInterval(state._interval);
@@ -598,7 +606,6 @@
       const response = await sendAcarsMessage(
         state,
         state.active_station,
-        active_stion,
         addMessage(state, `LOGOFF`),
         "cpdlc"
       );
@@ -632,7 +639,6 @@
         ),
         "telex"
       );
-      console.log(response);
       if (!response.ok) return false;
       const text = await response.text();
       return text.startsWith("ok");
@@ -643,7 +649,7 @@
         state.active_station,
         addMessage(
           state,
-          `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl2} DUE TO ${{ weather: "weather", performance: "aicraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl2} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
         ),
         "cpdlc"
       );
@@ -657,7 +663,7 @@
         state.active_station,
         addMessage(
           state,
-          `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aicraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
         ),
         "cpdlc"
       );
@@ -671,7 +677,7 @@
         state.active_station,
         addMessage(
           state,
-          `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aicraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
         ),
         "cpdlc"
       );
@@ -682,6 +688,92 @@
     poll(state);
     return state;
   };
+
+  // src/AcarsService.mjs
+  var import_msfs_wt21_shared2 = __toESM(__require("@microsoft/msfs-wt21-shared"), 1);
+  var acars = {
+    client: null,
+    messages: []
+  };
+  var fetchAcarsMessages = (bus, type) => {
+    return new Promise((resolve) => {
+      const sub = bus.getSubscriber().on(`acars_messages_${type}_response`).handle((v) => {
+        sub.destroy();
+        resolve(v.messages);
+      });
+      bus.getPublisher().pub(`acars_messages_${type}`, null, true, false);
+    });
+  };
+  var acarsService = (bus) => {
+    const publisher = bus.getPublisher();
+    bus.getSubscriber().on("acars_message_send").handle((v) => {
+      if (acars.client)
+        acars.client[v.key].apply(void 0, Array.isArray(v.arguments) ? v.arguments : Object.value(v.arguments));
+      return true;
+    });
+    bus.getSubscriber().on("acars_message_ack").handle((v) => {
+      if (acars.client) {
+        const message = acars.messages.find((e) => e._id === v.id);
+        if (message) {
+          message.response(v.option);
+          publisher.pub(
+            "acars_message_state_update",
+            {
+              id: v.id,
+              option: v.option
+            },
+            true,
+            false
+          );
+        }
+      }
+      return true;
+    });
+    bus.getSubscriber().on("acars_messages_send").handle((v) => {
+      publisher.pub(
+        "acars_messages_send_response",
+        { messages: acars.messages.filter((e) => e.type === "send") },
+        true,
+        false
+      );
+      return true;
+    });
+    bus.getSubscriber().on("acars_messages_recv").handle((v) => {
+      publisher.pub(
+        "acars_messages_recv_response",
+        { messages: acars.messages.filter((e) => e.type !== "send") },
+        true,
+        false
+      );
+      return true;
+    });
+    import_msfs_wt21_shared2.default.FmcUserSettings.getManager(bus).getSetting("flightNumber").sub((value) => {
+      if (!value || !value.length) {
+        const current = (void 0).acarsClient.get();
+        if (current) {
+          current.dispose();
+        }
+        acars.client = null;
+        publisher.pub("acars_new_client", null, true, false);
+        return;
+      }
+      acars.client = createClient(
+        GetStoredData("cj4_plus_hoppie_code"),
+        value,
+        "C25C",
+        (message) => {
+          acars.messages.push(message);
+          if (message.type === "send") {
+            publisher.getPublisher().pub("acars_outgoing_message", message, true, false);
+          } else {
+            publisher.pub("acars_incoming_message", message, true, false);
+            SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
+          }
+        }
+      );
+    });
+  };
+  var AcarsService_default = acarsService;
 
   // src/DatalinkPages.mjs
   var DatalinkSendMessagesPage = class extends import_msfs_wt21_fmc4.WT21FmcPage {
@@ -709,6 +801,30 @@
           current.unshift([entry]);
         }
         this.messages.set(current);
+        this.invalidate();
+      });
+      fetchAcarsMessages(this.bus, "send").then((messages) => {
+        for (const message of messages) {
+          const current = this.messages.get();
+          const entry = {
+            message,
+            link: import_msfs_sdk4.PageLinkField.createLink(
+              this,
+              `<${message.content.substr(0, 23)}`,
+              "/datalink-extra/message",
+              false,
+              {
+                message
+              }
+            )
+          };
+          if (current[current.length - 1].length < 5) {
+            current[current.length - 1].unshift(entry);
+          } else {
+            current.unshift([entry]);
+          }
+          this.messages.set(current);
+        }
         this.invalidate();
       });
     }
@@ -760,6 +876,41 @@
         this.messages.set(current);
         this.invalidate();
       });
+      this.bus.getSubscriber().on("acars_message_state_update").handle((e) => {
+        const current = this.messages.get();
+        for (const row of current) {
+          const msg = row.find((t) => t.message._id === e.id);
+          if (msg) {
+            msg.respondSend = e.option;
+            break;
+          }
+        }
+        this.messages.set(current);
+      });
+      fetchAcarsMessages(this.bus, "recv").then((messages) => {
+        for (const message of messages) {
+          const current = this.messages.get();
+          const entry = {
+            message,
+            link: import_msfs_sdk4.PageLinkField.createLink(
+              this,
+              `<${message.content.substr(0, 23)}`,
+              "/datalink-extra/message",
+              false,
+              {
+                message
+              }
+            )
+          };
+          if (current[current.length - 1].length < 5) {
+            current[current.length - 1].unshift(entry);
+          } else {
+            current.unshift([entry]);
+          }
+          this.messages.set(current);
+        }
+        this.invalidate();
+      });
     }
     render() {
       SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 0);
@@ -788,6 +939,25 @@
       super(bus, screen, props, fms, baseInstrument, renderCallback);
       this.clockField = import_msfs_wt21_fmc4.FmcCmuCommons.createClockField(this, this.bus);
       this.options = [];
+      this.updateHandler = bus.getSubscriber().on("acars_message_state_update").handle((e) => {
+        const message = this.params.get("message");
+        if (message && e.id === message._id) {
+          message.respondSend = e.option;
+          this.options = [
+            ...message.options.map((e2) => message.respondSend === e2 ? e2 : "")
+          ];
+          this.invalidate();
+        }
+      });
+    }
+    onDestroy() {
+      this.updateHandler.destroy();
+    }
+    onPause() {
+      this.updateHandler.pause();
+    }
+    onResume() {
+      this.updateHandler.resume();
     }
     render() {
       const message = this.params.get("message");
@@ -808,11 +978,16 @@
                     }
                   },
                   onSelected: async () => {
-                    message.response(opt);
-                    this.options = [
-                      ...message.options.map((e) => opt === e ? e : "")
-                    ];
-                    this.invalidate();
+                    if (message.respondSend) return true;
+                    this.bus.getPublisher().pub(
+                      "acars_message_ack",
+                      {
+                        option: opt,
+                        id: message._id
+                      },
+                      true,
+                      false
+                    );
                     return true;
                   }
                 }).bind(import_msfs_sdk4.Subject.create(opt))
@@ -820,7 +995,7 @@
             }
           } else {
             this.options = [
-              ...message.options.map((e) => e.respondSend === e ? e : "")
+              ...message.options.map((e) => message.respondSend === e ? e : "")
             ];
           }
         }
@@ -905,16 +1080,18 @@
           }
         },
         onSelected: async () => {
-          const client = this.props.acarsClient.get();
-          if (this.send.get() && client) {
-            const res = await client.atisRequest(
-              this.facility.get(),
-              this.opts[this.reqType.get()]
+          if (this.send.get()) {
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "atisRequest",
+                arguments: [this.facility.get(), this.opts[this.reqType.get()]]
+              },
+              true,
+              false
             );
-            if (res) {
-              [this.facility].forEach((e) => e.set(""));
-              this.checkReady();
-            }
+            [this.facility].forEach((e) => e.set(""));
+            this.checkReady();
           }
           return true;
         }
@@ -993,23 +1170,28 @@
           }
         },
         onSelected: async () => {
-          const client = this.props.acarsClient.get();
-          if (this.send.get() && client) {
+          if (this.send.get()) {
             const freeText = Array(4).fill().map((_, i) => this[`freeText${i}`].get()).filter((e) => e && e.length).join(" ");
-            const res = await client.sendPdc(
-              this.facility.get(),
-              this.dep.get(),
-              this.arr.get(),
-              this.gate.get(),
-              this.atis.get(),
-              convertUnixToHHMM(Date.now()),
-              freeText
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendPdc",
+                arguments: [
+                  this.facility.get(),
+                  this.dep.get(),
+                  this.arr.get(),
+                  this.gate.get(),
+                  this.atis.get(),
+                  convertUnixToHHMM(Date.now()),
+                  freeText
+                ]
+              },
+              true,
+              false
             );
-            if (res) {
-              [this.atis, this.facility, this.gate].forEach((e) => e.set(""));
-              const freeText2 = Array(4).fill().forEach((_, i) => this[`freeText${i}`].set(""));
-              this.checkReady();
-            }
+            [this.atis, this.facility, this.gate].forEach((e) => e.set(""));
+            Array(4).fill().forEach((_, i) => this[`freeText${i}`].set(""));
+            this.checkReady();
           }
           return true;
         }
@@ -1108,7 +1290,7 @@
               ).then((airport) => {
                 this.arr.set(airport.icaoStruct.ident);
                 this.flightId.set(
-                  import_msfs_wt21_shared2.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
+                  import_msfs_wt21_shared3.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
                 );
               });
             }
@@ -1117,7 +1299,7 @@
         }
       });
       this.flightId.set(
-        import_msfs_wt21_shared2.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
+        import_msfs_wt21_shared3.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
       );
       if (this.fms.getPlanForFmcRender().destinationAirportIcao)
         this.arr.set(this.fms.getPlanForFmcRender().destinationAirportIcao.ident);
@@ -1210,29 +1392,34 @@
           }
         },
         onSelected: async () => {
-          const client = this.props.acarsClient.get();
-          if (this.send.get() && client) {
+          if (this.send.get()) {
             const freeText = Array(4).fill().map((_, i) => this[`freeText${i}`].get()).filter((e) => e && e.length).join(" ");
-            const res = await client.sendOceanicClearance(
-              this.flightId.get(),
-              this.facility.get(),
-              this.entryPoint.get(),
-              this.time.get(),
-              this.fltLvl.get(),
-              this.mach.get(),
-              freeText
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendOceanicClearance",
+                arguments: [
+                  this.flightId.get(),
+                  this.facility.get(),
+                  this.entryPoint.get(),
+                  this.time.get(),
+                  this.fltLvl.get(),
+                  this.mach.get(),
+                  freeText
+                ]
+              },
+              true,
+              false
             );
-            if (res) {
-              [
-                this.facility,
-                this.entryPoint,
-                this.time,
-                this.fltLvl,
-                this.mach
-              ].forEach((e) => e.set(""));
-              const freeText2 = Array(4).fill().forEach((_, i) => this[`freeText${i}`].set(""));
-              this.checkReady();
-            }
+            [
+              this.facility,
+              this.entryPoint,
+              this.time,
+              this.fltLvl,
+              this.mach
+            ].forEach((e) => e.set(""));
+            Array(4).fill().forEach((_, i) => this[`freeText${i}`].set(""));
+            this.checkReady();
           }
           return true;
         }
@@ -1316,11 +1503,11 @@
       }).bind(this.fltLvl);
       this.bus.getSubscriber().on("fplOriginDestChanged").handle((evt) => {
         this.flightId.set(
-          import_msfs_wt21_shared2.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
+          import_msfs_wt21_shared3.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
         );
       });
       this.flightId.set(
-        import_msfs_wt21_shared2.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
+        import_msfs_wt21_shared3.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").get()
       );
     }
     checkReady() {
@@ -1412,15 +1599,20 @@
             }
           },
           onSelected: async () => {
-            const client = this.props.acarsClient.get();
-            if (this.send.get() && client) {
+            if (this.send.get()) {
               const freeText = Array(7).fill().map((_, i) => this[`freeText${i}`].get()).filter((e) => e && e.length).join(" ");
-              const res = await client.sendTelex(this.facility.get(), freeText);
-              if (res) {
-                [this.facility].forEach((e) => e.set(""));
-                const freeText2 = Array(7).fill().forEach((_, i) => this[`freeText${i}`].set(""));
-                this.checkReady();
-              }
+              this.bus.getPublisher().pub(
+                "acars_message_send",
+                {
+                  key: "sendTelex",
+                  arguments: [this.facility.get(), freeText]
+                },
+                true,
+                false
+              );
+              [this.facility].forEach((e) => e.set(""));
+              Array(7).fill().forEach((_, i) => this[`freeText${i}`].set(""));
+              this.checkReady();
             }
             return true;
           }
@@ -1497,7 +1689,7 @@
   // src/PerfPageExtension.mjs
   var import_msfs_wt21_fmc5 = __require("@microsoft/msfs-wt21-fmc");
   var import_msfs_sdk5 = __toESM(__require("@microsoft/msfs-sdk"), 1);
-  var import_msfs_wt21_shared3 = __toESM(__require("@microsoft/msfs-wt21-shared"), 1);
+  var import_msfs_wt21_shared4 = __toESM(__require("@microsoft/msfs-wt21-shared"), 1);
   var PerfInitPageExtension = class extends import_msfs_sdk5.AbstractFmcPageExtension {
     constructor(page) {
       super(page);
@@ -1608,87 +1800,51 @@
         "/datalink-extra/predep",
         DatalinkPreDepartureRequestPage,
         void 0,
-        {
-          acarsClient: this.acarsClient
-        }
+        {}
       );
       context.addPluginPageRoute(
         "/datalink-extra/oceanic",
         DatalinkOceanicRequestPage,
         void 0,
-        {
-          acarsClient: this.acarsClient
-        }
+        {}
       );
       context.addPluginPageRoute(
         "/datalink-extra/send-msgs",
         DatalinkSendMessagesPage,
         void 0,
-        {
-          acarsClient: this.acarsClient
-        }
+        {}
       );
       context.addPluginPageRoute(
         "/datalink-extra/recv-msgs",
         DatalinkReceivedMessagesPage,
         void 0,
-        {
-          acarsClient: this.acarsClient
-        }
+        {}
       );
       context.addPluginPageRoute(
         "/datalink-extra/telex",
         DatalinkTelexPage,
         void 0,
-        {
-          acarsClient: this.acarsClient
-        }
+        {}
       );
       context.addPluginPageRoute(
         "/datalink-extra/atis",
         DatalinkAtisPage,
         void 0,
-        {
-          acarsClient: this.acarsClient
-        }
+        {}
       );
       context.addPluginPageRoute(
         "/datalink-extra/message",
         DatalinkMessagePage,
         void 0,
-        {
-          acarsClient: this.acarsClient
-        }
+        {}
       );
       context.attachPageExtension(import_msfs_wt21_fmc6.UserSettingsPage, SettingsExtension_default);
       context.attachPageExtension(import_msfs_wt21_fmc6.RouteMenuPage, RouteMenuExtension_default);
       context.attachPageExtension(import_msfs_wt21_fmc6.DataLinkMenuPage, DatalinkPageExtension_default);
       context.attachPageExtension(import_msfs_wt21_fmc6.PerfInitPage, PerfPageExtension_default);
-      import_msfs_wt21_shared4.default.FmcUserSettings.getManager(this.binder.bus).getSetting("flightNumber").sub((value) => {
-        if (!value || !value.length) {
-          const current = this.acarsClient.get();
-          if (current) {
-            current.dispose();
-          }
-          this.acarsClient.set(null);
-          return;
-        }
-        this.acarsClient.set(
-          createClient(
-            GetStoredData("cj4_plus_hoppie_code"),
-            value,
-            "C25C",
-            (message) => {
-              if (message.type === "send") {
-                this.binder.bus.getPublisher().pub("acars_outgoing_message", message);
-              } else {
-                this.binder.bus.getPublisher().pub("acars_incoming_message", message);
-                SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
-              }
-            }
-          )
-        );
-      });
+      if (this.binder.isPrimaryInstrument) {
+        this.client = AcarsService_default(this.binder.bus);
+      }
     }
   };
   import_msfs_sdk6.default.registerPlugin(Plugin);
