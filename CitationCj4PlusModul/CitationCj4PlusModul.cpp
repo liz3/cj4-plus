@@ -48,7 +48,6 @@ extern "C" MSFS_CALLBACK void module_init(void)
 {
 	
 }
-
 extern "C" MSFS_CALLBACK void Update_StandAlone(float dTime)
 {
 	if (getLVar("CJ4_PLUS_ACTIVE", "number") != 1)
@@ -68,6 +67,23 @@ extern "C" MSFS_CALLBACK void Update_StandAlone(float dTime)
 		if(getAircraftVar("CIRCUIT ON", "bool", 49) == 1)
 			execute_calculator_code("49 (>K:ELECTRICAL_CIRCUIT_TOGGLE)", &att_pitch, NULL, NULL);
 	}
+	else {
+		double att_pitch = 0;
+
+		if (getLVar("LIGHTING_CABIN_6", "Bool")) {
+			execute_calculator_code("1 (>A:LIGHT CABIN:2, bool)", &att_pitch, NULL, NULL);
+			execute_calculator_code("100 (>K:LIGHT_POTENTIOMETER_6_SET)", &att_pitch, NULL, NULL);
+		}
+		else {
+			execute_calculator_code("0 (>A:LIGHT CABIN:2, bool)", &att_pitch, NULL, NULL);
+			execute_calculator_code("0 (>K:LIGHT_POTENTIOMETER_6_SET)", &att_pitch, NULL, NULL);
+		}
+
+	}
+	
+
+		
+	
 }
 
 extern "C" MSFS_CALLBACK void module_deinit(void)

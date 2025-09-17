@@ -18,11 +18,15 @@ import RouteMenuExtension from "./RouteMenuExtension.mjs";
 import DatalinkPageExtension from "./DatalinkPageExtension.mjs";
 import {
   DatalinkAtisPage,
+  DatalinkDirectToPage,
+  DatalinkLevelPage,
   DatalinkMessagePage,
   DatalinkOceanicRequestPage,
   DatalinkPreDepartureRequestPage,
   DatalinkReceivedMessagesPage,
   DatalinkSendMessagesPage,
+  DatalinkSpeedPage,
+  DatalinkStatusPage,
   DatalinkTelexPage,
 } from "./DatalinkPages.mjs";
 import { createClient } from "./Hoppie.mjs";
@@ -39,8 +43,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
   onInstalled() {}
   registerFmcExtensions(context) {
     const name = SimVar.GetSimVarValue("TITLE", "string");
-    if(name !== "Cessna Citation CJ4")
-      return;
+    if (name !== "Cessna Citation CJ4") return;
     SimVar.SetSimVarValue("L:CJ4_PLUS_ACTIVE", "number", 1);
     this.renderer = context.renderer;
     this.cduRenderer = new CdiRenderer(this.renderer, this.binder);
@@ -49,71 +52,80 @@ class Plugin extends WT21FmcAvionicsPlugin {
       "/datalink-extra/predep",
       DatalinkPreDepartureRequestPage,
       undefined,
-      {
-        
-      },
+      {},
     );
 
     context.addPluginPageRoute(
       "/datalink-extra/oceanic",
       DatalinkOceanicRequestPage,
       undefined,
-      {
-        
-      },
+      {},
     );
 
     context.addPluginPageRoute(
       "/datalink-extra/send-msgs",
       DatalinkSendMessagesPage,
       undefined,
-      {
-       
-      },
+      {},
     );
 
     context.addPluginPageRoute(
       "/datalink-extra/recv-msgs",
       DatalinkReceivedMessagesPage,
       undefined,
-      {
-       
-      },
+      {},
     );
 
     context.addPluginPageRoute(
       "/datalink-extra/telex",
       DatalinkTelexPage,
       undefined,
-      {
-       
-      },
+      {},
     );
 
     context.addPluginPageRoute(
       "/datalink-extra/atis",
       DatalinkAtisPage,
       undefined,
-      {
-      
-      },
+      {},
     );
 
     context.addPluginPageRoute(
       "/datalink-extra/message",
       DatalinkMessagePage,
       undefined,
-      {
-        
-      },
+      {},
     );
-
+    context.addPluginPageRoute(
+      "/datalink-extra/cpdlc/status",
+      DatalinkStatusPage,
+      undefined,
+      {},
+    );
+    context.addPluginPageRoute(
+      "/datalink-extra/cpdlc/direct",
+      DatalinkDirectToPage,
+      undefined,
+      {},
+    );
+    context.addPluginPageRoute(
+      "/datalink-extra/cpdlc/speed",
+      DatalinkSpeedPage,
+      undefined,
+      {},
+    );
+    context.addPluginPageRoute(
+      "/datalink-extra/cpdlc/level",
+      DatalinkLevelPage,
+      undefined,
+      {},
+    );
     context.attachPageExtension(UserSettingsPage, PlusSettingsExtension);
     context.attachPageExtension(RouteMenuPage, RouteMenuExtension);
     context.attachPageExtension(DataLinkMenuPage, DatalinkPageExtension);
     context.attachPageExtension(PerfInitPage, PerfInitPageExtension);
 
-    if(this.binder.isPrimaryInstrument){
+    if (this.binder.isPrimaryInstrument) {
       this.client = acarsService(this.binder.bus);
     }
   }

@@ -66,14 +66,23 @@ const responseOptions = (c) => {
 };
 export const messageStateUpdate = (state, message) => {
   if (message.type === "cpdlc" && message.content === "LOGON ACCEPTED") {
-    if (state._stationCallback) state._stationCallback(message.from);
+    if (state._stationCallback)
+      state._stationCallback({ active: message.from, pending: null });
     state.active_station = message.from;
-    station.pending_station = null;
+    state.pending_station = null;
   } else if (message.type === "cpdlc" && message.content === "LOGOFF") {
-    if (state._stationCallback) state._stationCallback(null);
+    if (state._stationCallback)
+      state._stationCallback({ active: null, pending: null });
     state.active_station = null;
-    station.pending_station = null;
+    state.pending_station = null;
   }
+};
+const cpdlcStringBuilder = (state, request, replyId = "") => {
+  if (state._min_count === 63) {
+    state._min_count = 0;
+  }
+  state._min_count++;
+  return `/data2/${state._min_count}/${replyId}/N/${request}`;
 };
 const poll = (state) => {
   state._interval = setTimeout(() => {
@@ -82,26 +91,28 @@ const poll = (state) => {
       if (response.ok) {
         response.text().then((raw) => {
           for (const message of parseMessages(raw)) {
-            if(message.from === state.callsign && message.type === "inforeq"){
+            if (message.from === state.callsign && message.type === "inforeq") {
               continue;
             }
             message._id = state.idc++;
             messageStateUpdate(state, message);
             if (message.type === "cpdlc" && message.cpdlc.ra) {
-              message.response = async (code) => {
-                message.respondSend = code;
-                if (state._min_count === 63) {
-                  state._min_count = 0;
-                }
-                state._min_count++;
-                sendAcarsMessage(
-                  state,
-                  message.from,
-                  `/data2/${state._min_count}/${message.cpdlc.min}/${code === "STANDBY" ? "NE" : "N"}/${code}`,
-                  "cpdlc",
-                );
-              };
-              message.options = responseOptions(message.cpdlc.ra);
+              const opts = responseOptions(message.cpdlc.ra);
+              if (opts)
+                message.response = async (code) => {
+                  message.respondSend = code;
+                  if (state._min_count === 63) {
+                    state._min_count = 0;
+                  }
+                  state._min_count++;
+                  sendAcarsMessage(
+                    state,
+                    message.from,
+                    `/data2/${state._min_count}/${message.cpdlc.min}/${code === "STANDBY" ? "NE" : "N"}/${code}`,
+                    "cpdlc",
+                  );
+                };
+              message.options = opts;
               message.respondSend = null;
             }
             state.message_stack[message._id] = message;
@@ -121,7 +132,6 @@ const addMessage = (state, content) => {
     content,
     from: state.callsign,
     ts: Date.now(),
-    _id: state.idc++
   });
   return content;
 };
@@ -147,7 +157,7 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
     _min_count: 0,
     aircraft: aicraftType,
     idc: 0,
-    message_stack: {}
+    message_stack: {},
   };
 
   state.dispose = () => {
@@ -188,27 +198,38 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
     const response = await sendAcarsMessage(
       state,
       to,
-      addMessage(state, `REQUEST LOGON`),
+      cpdlcStringBuilder(state, addMessage(state, `REQUEST LOGON`)),
       "cpdlc",
     );
     if (!response.ok) return false;
     const text = await response.text();
-    return text.startsWith("ok");
+
+    const ok = text.startsWith("ok");
+    if (ok) {
+      if (state._stationCallback)
+        state._stationCallback({
+          active: null,
+          pending: state.pending_station,
+        });
+    }
+    return ok;
   };
 
   state.sendLogoffRequest = async () => {
-    if (to !== state.active_station) return;
-
+    if (!state.active_station) return;
+    const station = state.active_station;
+    state.active_station = null;
+    if (state._stationCallback)
+      state._stationCallback({ active: null, pending: null });
     const response = await sendAcarsMessage(
       state,
-      state.active_station,
-      addMessage(state, `LOGOFF`),
+      station,
+      cpdlcStringBuilder(state, addMessage(state, `LOGOFF`)),
       "cpdlc",
     );
     if (!response.ok) return false;
     const text = await response.text();
-    state.active_station = null;
-    if (state._stationCallback) state._stationCallback(null);
+
     return text.startsWith("ok");
   };
 
@@ -241,7 +262,7 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
       to,
       addMessage(
         state,
-        `REQUEST PREDEP CLEARANCE ${state.callsign} ${state.aircraft} TO ${arr} AT ${dep} ${stand} ${atis} ${eob}Z${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        `REQUEST PREDEP CLEARANCE ${state.callsign} ${state.aircraft} TO ${arr} AT ${dep} ${stand} ATIS ${atis} ${eob}Z${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
       ),
       "telex",
     );
@@ -254,9 +275,12 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
     const response = await sendAcarsMessage(
       state,
       state.active_station,
-      addMessage(
+      cpdlcStringBuilder(
         state,
-        `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        addMessage(
+          state,
+          `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        ),
       ),
       "cpdlc",
     );
@@ -269,9 +293,12 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
     const response = await sendAcarsMessage(
       state,
       state.active_station,
-      addMessage(
+      cpdlcStringBuilder(
         state,
-        `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        addMessage(
+          state,
+          `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        ),
       ),
       "cpdlc",
     );
@@ -284,9 +311,12 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
     const response = await sendAcarsMessage(
       state,
       state.active_station,
-      addMessage(
+      cpdlcStringBuilder(
         state,
-        `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        addMessage(
+          state,
+          `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase(),
+        ),
       ),
       "cpdlc",
     );

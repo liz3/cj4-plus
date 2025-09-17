@@ -16,7 +16,7 @@ import msfsSdk, {
   Subject,
 } from "@microsoft/msfs-sdk";
 import { convertUnixToHHMM } from "./Hoppie.mjs";
-import { fetchAcarsMessages } from "./AcarsService.mjs";
+import { fetchAcarsMessages, fetchAcarsStatus } from "./AcarsService.mjs";
 
 export class DatalinkSendMessagesPage extends WT21FmcPage {
   constructor(
@@ -1091,6 +1091,638 @@ export class DatalinkTelexPage extends WT21FmcPage {
         [],
         ["", this.sendButton],
         [""],
+        [
+          PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+    ];
+  }
+}
+
+export class DatalinkStatusPage extends WT21FmcPage {
+  constructor(
+    bus,
+    screen,
+    props,
+    fms,
+    /** @deprecated */
+    baseInstrument, // TODO we should really not have this here
+    renderCallback,
+  ) {
+    super(bus, screen, props, fms, baseInstrument, renderCallback);
+    this.clockField = FmcCmuCommons.createClockField(this, this.bus);
+    this.facility = Subject.create("");
+    this.send = Subject.create("NOTIFY");
+    this.status = Subject.create(null);
+    this.activeStation = Subject.create("");
+
+    this.facilityField = new msfsSdk.TextInputField(this, {
+      formatter: new StringInputFormat({
+        nullValueString: "□□□□□□□□□□□",
+        maxLength: 11,
+      }),
+      onSelected: async (scratchpadContents) => {
+        this.facility.set(scratchpadContents);
+
+        return true;
+      },
+    }).bind(this.facility);
+    this.sendButton = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "",
+        /** @inheritDoc */
+        format(value) {
+          return `<${value}[blue]`;
+        },
+      },
+      onSelected: async () => {
+        if (this.activeStation.get()) {
+          this.bus.getPublisher().pub(
+            "acars_message_send",
+            {
+              key: "sendLogoffRequest",
+              arguments: [],
+            },
+            true,
+            false,
+          );
+        } else {
+          if (this.facility.get().length)
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendLogonRequest",
+                arguments: [this.facility.get()],
+              },
+              true,
+              false,
+            );
+        }
+        return true;
+      },
+    }).bind(this.send);
+    this.statusField = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "----",
+        /** @inheritDoc */
+        format(value) {
+          return value;
+        },
+      },
+    }).bind(this.status);
+
+    this.bus
+      .getSubscriber()
+      .on("acars_station_status")
+      .handle((message) => {
+        if (message.active) {
+          this.status.set(`${message.active}[green]`);
+          this.activeStation.set(true);
+          this.send.set("LOGOFF");
+          this.facility.set("");
+        } else {
+          if (message.pending) {
+            this.status.set(`${message.pending} NOTIFIED[green]`);
+            this.send.set("NOTIFY AGAIN");
+          } else {
+            this.send.set("NOTIFY");
+            this.status.set(null);
+          }
+          this.activeStation.set(false);
+        }
+        this.invalidate();
+      });
+  }
+
+  render() {
+    return [
+      [
+        ["DL[blue]", "", "STATUS[blue]"],
+        ["FACILITY[blue]"],
+        [this.facilityField],
+        ["STATUS[blue]"],
+        [this.statusField],
+        [],
+        [this.sendButton],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [
+          PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+    ];
+  }
+}
+
+export class DatalinkDirectToPage extends WT21FmcPage {
+  constructor(
+    bus,
+    screen,
+    props,
+    fms,
+    /** @deprecated */
+    baseInstrument, // TODO we should really not have this here
+    renderCallback,
+  ) {
+    super(bus, screen, props, fms, baseInstrument, renderCallback);
+    this.clockField = FmcCmuCommons.createClockField(this, this.bus);
+    this.facility = Subject.create("");
+    this.send = Subject.create(false);
+    this.reason = Subject.create(0);
+    this.opts = ["WEATHER", "A/C PERF"];
+    this.station = Subject.create(null);
+    this.bus
+      .getSubscriber()
+      .on("acars_station_status")
+      .handle((message) => {
+        this.station.set(message.active);
+        this.checkReady();
+
+        this.invalidate();
+      });
+
+    this.stationField = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "----",
+        /** @inheritDoc */
+        format(value) {
+          return `${value}[blue]`;
+        },
+      },
+    }).bind(this.station);
+    for (let i = 0; i < 4; i++) {
+      this[`freeText${i}`] = Subject.create("");
+      this[`freeTextField${i}`] = new msfsSdk.TextInputField(this, {
+        formatter: new StringInputFormat({
+          nullValueString: "(----------------------)[blue]",
+          maxLength: 24,
+        }),
+        onSelected: async (scratchpadContents) => {
+          this[`freeText${i}`].set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this[`freeText${i}`]);
+    }
+    fetchAcarsStatus(this.bus).then((res) => {
+      this.station.set(res.active);
+      this.invalidate();
+    });
+    this.sendButton = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "SEND",
+        /** @inheritDoc */
+        format(value) {
+          return `SEND[${value ? "blue" : "white"}]`;
+        },
+      },
+      onSelected: async () => {
+        if (this.send.get()) {
+          const freeText = Array(4)
+            .fill()
+            .map((_, i) => this[`freeText${i}`].get())
+            .filter((e) => e && e.length)
+            .join(" ");
+          this.bus.getPublisher().pub(
+            "acars_message_send",
+            {
+              key: "sendDirectTo",
+              arguments: [
+                this.facility.get(),
+                this.reason.get() === 0 ? "weather" : "performance",
+                freeText,
+              ],
+            },
+            true,
+            false,
+          );
+
+          [this.facility].forEach((e) => e.set(""));
+          Array(4)
+            .fill()
+            .forEach((_, i) => this[`freeText${i}`].set(""));
+          this.checkReady();
+        }
+        return true;
+      },
+    }).bind(this.send);
+
+    this.facilityField = new msfsSdk.TextInputField(this, {
+      formatter: new StringInputFormat({
+        nullValueString: "□□□□□",
+        maxLength: 5,
+      }),
+      onSelected: async (scratchpadContents) => {
+        this.facility.set(scratchpadContents);
+        this.checkReady();
+        return true;
+      },
+    }).bind(this.facility);
+    this.reasonField = new msfsSdk.SwitchLabel(this, {
+      optionStrings: this.opts,
+      activeStyle: "green",
+    }).bind(this.reason);
+  }
+  checkReady() {
+    const array = [this.facility, this.station];
+    this.send.set(
+      !array.find((e) => {
+        const v = e.get();
+        return !v || !v.length;
+      }),
+    );
+  }
+  render() {
+    return [
+      [
+        ["DL[blue]", this.PagingIndicator, "DIRECT CLX REQ[blue]"],
+        ["WAYPOINT[blue]"],
+        [this.facilityField],
+        ["REASON[blue]"],
+        [this.reasonField],
+        [],
+        [],
+        [],
+        [],
+        [""],
+        [this.stationField, this.sendButton],
+        [""],
+        [
+          PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+      [
+        ["DL[blue]", this.PagingIndicator, "DIRECT CLX REQ[blue]"],
+        [" REMARKS[blue]"],
+        [this.freeTextField0],
+        [],
+        [this.freeTextField1],
+        [],
+        [this.freeTextField2],
+        [],
+        [this.freeTextField3],
+        [],
+        [this.stationField, this.sendButton],
+        [""],
+        [
+          PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+    ];
+  }
+}
+
+export class DatalinkSpeedPage extends WT21FmcPage {
+  constructor(
+    bus,
+    screen,
+    props,
+    fms,
+    /** @deprecated */
+    baseInstrument, // TODO we should really not have this here
+    renderCallback,
+  ) {
+    super(bus, screen, props, fms, baseInstrument, renderCallback);
+    this.clockField = FmcCmuCommons.createClockField(this, this.bus);
+    this.send = Subject.create(false);
+    this.value = Subject.create("");
+    this.reason = Subject.create(0);
+    this.unit = Subject.create(0);
+    this.opts = ["WEATHER", "A/C PERF"];
+    this.units = ["KTS", "MACH"];
+    this.station = Subject.create(null);
+    this.bus
+      .getSubscriber()
+      .on("acars_station_status")
+      .handle((message) => {
+        this.station.set(message.active);
+        this.checkReady();
+        this.invalidate();
+      });
+
+    this.stationField = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "----",
+        /** @inheritDoc */
+        format(value) {
+          return `${value}[blue]`;
+        },
+      },
+    }).bind(this.station);
+
+    for (let i = 0; i < 4; i++) {
+      this[`freeText${i}`] = Subject.create("");
+      this[`freeTextField${i}`] = new msfsSdk.TextInputField(this, {
+        formatter: new StringInputFormat({
+          nullValueString: "(----------------------)[blue]",
+          maxLength: 24,
+        }),
+        onSelected: async (scratchpadContents) => {
+          this[`freeText${i}`].set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this[`freeText${i}`]);
+    }
+
+    this.sendButton = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "SEND",
+        /** @inheritDoc */
+        format(value) {
+          return `SEND[${value ? "blue" : "white"}]`;
+        },
+      },
+      onSelected: async () => {
+        if (this.send.get()) {
+          const freeText = Array(4)
+            .fill()
+            .map((_, i) => this[`freeText${i}`].get())
+            .filter((e) => e && e.length)
+            .join(" ");
+          this.bus.getPublisher().pub(
+            "acars_message_send",
+            {
+              key: "sendSpeedChange",
+              arguments: [
+                this.unit.get() === 0 ? "knots" : "mach",
+                this.value.get(),
+                this.reason.get() === 0 ? "weather" : "performance",
+                freeText,
+              ],
+            },
+            true,
+            false,
+          );
+
+          [this.value].forEach((e) => e.set(""));
+          Array(4)
+            .fill()
+            .forEach((_, i) => this[`freeText${i}`].set(""));
+          this.checkReady();
+        }
+        return true;
+      },
+    }).bind(this.send);
+    fetchAcarsStatus(this.bus).then((res) => {
+      this.station.set(res.active);
+      this.invalidate();
+    });
+    this.speedField = new msfsSdk.TextInputField(this, {
+      formatter: new StringInputFormat({
+        nullValueString: "□□□□",
+        maxLength: 4,
+        format(value) {
+          return `${this.unit.get() === 1 ? "M" : ""}${value}`;
+        },
+      }),
+      onSelected: async (scratchpadContents) => {
+        if (Number.isNaN(Number.parseFloat(scratchpadContents))) return false;
+        this.value.set(scratchpadContents);
+        this.checkReady();
+        return true;
+      },
+    }).bind(this.value);
+    this.reasonField = new msfsSdk.SwitchLabel(this, {
+      optionStrings: this.opts,
+      activeStyle: "green",
+    }).bind(this.reason);
+    this.unitField = new msfsSdk.SwitchLabel(this, {
+      optionStrings: this.units,
+      activeStyle: "green",
+    }).bind(this.unit);
+  }
+  checkReady() {
+    const array = [this.value, this.station];
+    this.send.set(
+      !array.find((e) => {
+        const v = e.get();
+        return typeof v === "string" ? v.length === 0 : false;
+      }),
+    );
+  }
+  render() {
+    return [
+      [
+        ["DL[blue]", this.PagingIndicator, "SPEED CLX REQ[blue]"],
+        ["SPEED[blue]", "UNIT[blue]"],
+        [this.speedField, this.unitField],
+        ["REASON[blue]"],
+        [this.reasonField],
+        [],
+        [],
+        [],
+        [],
+        [""],
+        [this.stationField, this.sendButton],
+        [""],
+        [
+          PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+      [
+        ["DL[blue]", this.PagingIndicator, "SPEED CLX REQ[blue]"],
+        [" REMARKS[blue]"],
+        [this.freeTextField0],
+        [],
+        [this.freeTextField1],
+        [],
+        [this.freeTextField2],
+        [],
+        [this.freeTextField3],
+        [],
+        [this.stationField, this.sendButton],
+        [""],
+        [
+          PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+    ];
+  }
+}
+
+export class DatalinkLevelPage extends WT21FmcPage {
+  constructor(
+    bus,
+    screen,
+    props,
+    fms,
+    /** @deprecated */
+    baseInstrument, // TODO we should really not have this here
+    renderCallback,
+  ) {
+    super(bus, screen, props, fms, baseInstrument, renderCallback);
+    this.clockField = FmcCmuCommons.createClockField(this, this.bus);
+    this.send = Subject.create(false);
+    this.value = Subject.create("");
+    this.reason = Subject.create(0);
+    this.unit = Subject.create(0);
+    this.opts = ["WEATHER", "A/C PERF"];
+    this.units = ["CLIMB", "DESCEND"];
+    this.station = Subject.create(null);
+    this.bus
+      .getSubscriber()
+      .on("acars_station_status")
+      .handle((message) => {
+        this.station.set(message.active);
+        this.checkReady();
+        this.invalidate();
+      });
+
+    this.stationField = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "----",
+        /** @inheritDoc */
+        format(value) {
+          return `${value}[blue]`;
+        },
+      },
+    }).bind(this.station);
+
+    fetchAcarsStatus(this.bus).then((res) => {
+      this.station.set(res.active);
+      this.invalidate();
+    });
+
+    for (let i = 0; i < 4; i++) {
+      this[`freeText${i}`] = Subject.create("");
+      this[`freeTextField${i}`] = new msfsSdk.TextInputField(this, {
+        formatter: new StringInputFormat({
+          nullValueString: "(----------------------)[blue]",
+          maxLength: 24,
+        }),
+        onSelected: async (scratchpadContents) => {
+          this[`freeText${i}`].set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this[`freeText${i}`]);
+    }
+
+    this.sendButton = new msfsSdk.DisplayField(this, {
+      formatter: {
+        nullValueString: "SEND",
+        /** @inheritDoc */
+        format(value) {
+          return `SEND[${value ? "blue" : "white"}]`;
+        },
+      },
+      onSelected: async () => {
+        if (this.send.get()) {
+          const freeText = Array(4)
+            .fill()
+            .map((_, i) => this[`freeText${i}`].get())
+            .filter((e) => e && e.length)
+            .join(" ");
+          this.bus.getPublisher().pub(
+            "acars_message_send",
+            {
+              key: "sendLevelChange",
+              arguments: [
+                this.value.get(),
+                this.unit.get() === 0,
+                this.reason.get() === 0 ? "weather" : "performance",
+                freeText,
+              ],
+            },
+            true,
+            false,
+          );
+
+          [this.value].forEach((e) => e.set(""));
+          Array(4)
+            .fill()
+            .forEach((_, i) => this[`freeText${i}`].set(""));
+          this.checkReady();
+        }
+        return true;
+      },
+    }).bind(this.send);
+
+    this.levelField = new msfsSdk.TextInputField(this, {
+      formatter: new StringInputFormat({
+        nullValueString: "□□□",
+        maxLength: 3,
+        format(value) {
+          return `FL${value}`;
+        },
+      }),
+      onSelected: async (scratchpadContents) => {
+        if (scratchpadContents.startsWith("FL"))
+          scratchpadContents = scratchpadContents.substr(2);
+        if (Number.isNaN(Number.parseInt(scratchpadContents))) return false;
+        this.value.set(scratchpadContents);
+        this.checkReady();
+        return true;
+      },
+    }).bind(this.value);
+    this.reasonField = new msfsSdk.SwitchLabel(this, {
+      optionStrings: this.opts,
+      activeStyle: "green",
+    }).bind(this.reason);
+    this.unitField = new msfsSdk.SwitchLabel(this, {
+      optionStrings: this.units,
+      activeStyle: "green",
+    }).bind(this.unit);
+  }
+  checkReady() {
+    const array = [this.value, this.station];
+    this.send.set(
+      !array.find((e) => {
+        const v = e.get();
+        return v=== null || typeof v === "string" ? v.length === 0 : false;
+      }),
+    );
+  }
+  render() {
+    return [
+      [
+        ["DL[blue]", this.PagingIndicator, "LEVEL CLX REQ[blue]"],
+        ["FL[blue]", "DIR[blue]"],
+        [this.levelField, this.unitField],
+        ["REASON[blue]"],
+        [this.reasonField],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [this.stationField, this.sendButton],
+        [""],
+        [
+          PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+      [
+        ["DL[blue]", this.PagingIndicator, "LEVEL CLX REQ[blue]"],
+        [" REMARKS[blue]"],
+        [this.freeTextField0],
+        [],
+        [this.freeTextField1],
+        [],
+        [this.freeTextField2],
+        [],
+        [this.freeTextField3],
+        [],
+        [this.stationField, this.sendButton],
+        [],
         [
           PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
           "",

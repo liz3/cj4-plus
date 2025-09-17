@@ -19,6 +19,19 @@ export const fetchAcarsMessages = (bus, type) => {
   });
 };
 
+export const fetchAcarsStatus = (bus) => {
+  return new Promise((resolve) => {
+    const sub = bus
+      .getSubscriber()
+      .on(`acars_status_response`)
+      .handle((v) => {
+        sub.destroy();
+        resolve(v);
+      });
+    bus.getPublisher().pub(`acars_status_req`, null, true, false);
+  });
+};
+
 const acarsService = (bus) => {
   const publisher = bus.getPublisher();
   bus
@@ -26,7 +39,10 @@ const acarsService = (bus) => {
     .on("acars_message_send")
     .handle((v) => {
       if (acars.client)
-        acars.client[v.key].apply(this, Array.isArray(v.arguments) ? v.arguments : Object.value(v.arguments));
+        acars.client[v.key].apply(
+          this,
+          Array.isArray(v.arguments) ? v.arguments : Object.value(v.arguments),
+        );
       return true;
     });
   bus
@@ -56,7 +72,22 @@ const acarsService = (bus) => {
     .handle((v) => {
       publisher.pub(
         "acars_messages_send_response",
-        {messages:  acars.messages.filter((e) => e.type === "send")},
+        { messages: acars.messages.filter((e) => e.type === "send") },
+        true,
+        false,
+      );
+      return true;
+    });
+  bus
+    .getSubscriber()
+    .on("acars_status_req")
+    .handle((v) => {
+      publisher.pub(
+        "acars_status_response",
+        {
+          active: acars.client ? acars.client.active_station : null,
+          pending: acars.client ? acars.client.pending_station : null,
+        },
         true,
         false,
       );
@@ -68,7 +99,7 @@ const acarsService = (bus) => {
     .handle((v) => {
       publisher.pub(
         "acars_messages_recv_response",
-        {messages: acars.messages.filter((e) => e.type !== "send")},
+        { messages: acars.messages.filter((e) => e.type !== "send") },
         true,
         false,
       );
@@ -102,6 +133,9 @@ const acarsService = (bus) => {
           }
         },
       );
+      acars.client._stationCallback = (opt) => {
+        publisher.getPublisher().pub("acars_station_status", opt, true, false);
+      };
     });
 };
 

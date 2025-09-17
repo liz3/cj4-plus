@@ -23,13 +23,13 @@
     if (typeof require !== "undefined") return require.apply(this, arguments);
     throw Error('Dynamic require of "' + x + '" is not supported');
   });
-  var __copyProps = (to2, from, except, desc) => {
+  var __copyProps = (to, from, except, desc) => {
     if (from && typeof from === "object" || typeof from === "function") {
       for (let key of __getOwnPropNames(from))
-        if (!__hasOwnProp.call(to2, key) && key !== except)
-          __defProp(to2, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
     }
-    return to2;
+    return to;
   };
   var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
     // If the importer is in node compatibility mode or this is not an ESM
@@ -405,6 +405,45 @@
         "<ATIS",
         "/datalink-extra/atis"
       );
+      renderedTemplates[1] = [
+        renderedTemplates[0][0],
+        [],
+        [
+          import_msfs_sdk3.PageLinkField.createLink(
+            this.page,
+            "<STATUS",
+            "/datalink-extra/cpdlc/status"
+          ),
+          import_msfs_sdk3.PageLinkField.createLink(
+            this.page,
+            "DIRECT CLX>",
+            "/datalink-extra/cpdlc/direct"
+          )
+        ],
+        [],
+        [
+          import_msfs_sdk3.PageLinkField.createLink(
+            this.page,
+            "<SPEED CLX",
+            "/datalink-extra/cpdlc/speed"
+          ),
+          import_msfs_sdk3.PageLinkField.createLink(
+            this.page,
+            "LEVEL CLX>",
+            "/datalink-extra/cpdlc/level"
+          )
+        ],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        renderedTemplates[0][12]
+      ];
+      renderedTemplates[0][0][1] = this.page.PagingIndicator;
+      renderedTemplates[1][0][1] = this.page.PagingIndicator;
     }
   };
   var DatalinkPageExtension_default = DatalinkPageExtension;
@@ -480,14 +519,23 @@
   };
   var messageStateUpdate = (state, message) => {
     if (message.type === "cpdlc" && message.content === "LOGON ACCEPTED") {
-      if (state._stationCallback) state._stationCallback(message.from);
+      if (state._stationCallback)
+        state._stationCallback({ active: message.from, pending: null });
       state.active_station = message.from;
-      station.pending_station = null;
+      state.pending_station = null;
     } else if (message.type === "cpdlc" && message.content === "LOGOFF") {
-      if (state._stationCallback) state._stationCallback(null);
+      if (state._stationCallback)
+        state._stationCallback({ active: null, pending: null });
       state.active_station = null;
-      station.pending_station = null;
+      state.pending_station = null;
     }
+  };
+  var cpdlcStringBuilder = (state, request, replyId = "") => {
+    if (state._min_count === 63) {
+      state._min_count = 0;
+    }
+    state._min_count++;
+    return `/data2/${state._min_count}/${replyId}/N/${request}`;
   };
   var poll = (state) => {
     state._interval = setTimeout(() => {
@@ -502,20 +550,22 @@
               message._id = state.idc++;
               messageStateUpdate(state, message);
               if (message.type === "cpdlc" && message.cpdlc.ra) {
-                message.response = async (code) => {
-                  message.respondSend = code;
-                  if (state._min_count === 63) {
-                    state._min_count = 0;
-                  }
-                  state._min_count++;
-                  sendAcarsMessage(
-                    state,
-                    message.from,
-                    `/data2/${state._min_count}/${message.cpdlc.min}/${code === "STANDBY" ? "NE" : "N"}/${code}`,
-                    "cpdlc"
-                  );
-                };
-                message.options = responseOptions(message.cpdlc.ra);
+                const opts = responseOptions(message.cpdlc.ra);
+                if (opts)
+                  message.response = async (code) => {
+                    message.respondSend = code;
+                    if (state._min_count === 63) {
+                      state._min_count = 0;
+                    }
+                    state._min_count++;
+                    sendAcarsMessage(
+                      state,
+                      message.from,
+                      `/data2/${state._min_count}/${message.cpdlc.min}/${code === "STANDBY" ? "NE" : "N"}/${code}`,
+                      "cpdlc"
+                    );
+                  };
+                message.options = opts;
                 message.respondSend = null;
               }
               state.message_stack[message._id] = message;
@@ -534,8 +584,7 @@
       type: "send",
       content,
       from: state.callsign,
-      ts: Date.now(),
-      _id: state.idc++
+      ts: Date.now()
     });
     return content;
   };
@@ -563,10 +612,10 @@
       if (state._interval) clearInterval(state._interval);
       state._interval = null;
     };
-    state.sendTelex = async (to2, message) => {
+    state.sendTelex = async (to, message) => {
       const response = await sendAcarsMessage(
         state,
-        to2,
+        to,
         addMessage(state, message.toUpperCase()),
         "telex"
       );
@@ -588,37 +637,47 @@
       }
       return text.startsWith("ok");
     };
-    state.sendLogonRequest = async (to2) => {
-      if (to2 === state.active_station) return;
-      state.pending_station = to2;
+    state.sendLogonRequest = async (to) => {
+      if (to === state.active_station) return;
+      state.pending_station = to;
       const response = await sendAcarsMessage(
         state,
-        to2,
-        addMessage(state, `REQUEST LOGON`),
+        to,
+        cpdlcStringBuilder(state, addMessage(state, `REQUEST LOGON`)),
         "cpdlc"
       );
       if (!response.ok) return false;
       const text = await response.text();
-      return text.startsWith("ok");
+      const ok = text.startsWith("ok");
+      if (ok) {
+        if (state._stationCallback)
+          state._stationCallback({
+            active: null,
+            pending: state.pending_station
+          });
+      }
+      return ok;
     };
     state.sendLogoffRequest = async () => {
-      if (to !== state.active_station) return;
+      if (!state.active_station) return;
+      const station = state.active_station;
+      state.active_station = null;
+      if (state._stationCallback)
+        state._stationCallback({ active: null, pending: null });
       const response = await sendAcarsMessage(
         state,
-        state.active_station,
-        addMessage(state, `LOGOFF`),
+        station,
+        cpdlcStringBuilder(state, addMessage(state, `LOGOFF`)),
         "cpdlc"
       );
       if (!response.ok) return false;
       const text = await response.text();
-      state.active_station = null;
-      if (state._stationCallback) state._stationCallback(null);
       return text.startsWith("ok");
     };
-    state.sendOceanicClearance = async (cs, to2, entryPoint, eta, level, mach, freeText) => {
+    state.sendOceanicClearance = async (cs, to, entryPoint, eta, level, mach, freeText) => {
       const response = await sendAcarsMessage(
         state,
-        to2,
+        to,
         addMessage(
           state,
           `REQUEST OCEANIC CLEARANCE ${cs} ${state.aircraft} ESTIMATING ${entryPoint} AT ${eta}Z FLIGHT LEVEL ${lvl} REQUEST MACH ${mach}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
@@ -629,13 +688,13 @@
       const text = await response.text();
       return text.startsWith("ok");
     };
-    state.sendPdc = async (to2, dep, arr, stand, atis, eob, freeText) => {
+    state.sendPdc = async (to, dep, arr, stand, atis, eob, freeText) => {
       const response = await sendAcarsMessage(
         state,
-        to2,
+        to,
         addMessage(
           state,
-          `REQUEST PREDEP CLEARANCE ${state.callsign} ${state.aircraft} TO ${arr} AT ${dep} ${stand} ${atis} ${eob}Z${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          `REQUEST PREDEP CLEARANCE ${state.callsign} ${state.aircraft} TO ${arr} AT ${dep} ${stand} ATIS ${atis} ${eob}Z${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
         ),
         "telex"
       );
@@ -647,9 +706,12 @@
       const response = await sendAcarsMessage(
         state,
         state.active_station,
-        addMessage(
+        cpdlcStringBuilder(
           state,
-          `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl2} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          addMessage(
+            state,
+            `REQUEST ${climb ? "CLIMB" : "DESCEND"} TO FL${lvl2} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          )
         ),
         "cpdlc"
       );
@@ -661,9 +723,12 @@
       const response = await sendAcarsMessage(
         state,
         state.active_station,
-        addMessage(
+        cpdlcStringBuilder(
           state,
-          `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          addMessage(
+            state,
+            `REQUEST ${unit === "knots" ? `${value} kts` : `M${value}`} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          )
         ),
         "cpdlc"
       );
@@ -675,9 +740,12 @@
       const response = await sendAcarsMessage(
         state,
         state.active_station,
-        addMessage(
+        cpdlcStringBuilder(
           state,
-          `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          addMessage(
+            state,
+            `REQUEST DIRECT TO ${waypoint} DUE TO ${{ weather: "weather", performance: "aircraft performance" }[reason.toLowerCase()]}${freeText.length ? ` ${freeText}` : ""}`.toUpperCase()
+          )
         ),
         "cpdlc"
       );
@@ -704,11 +772,23 @@
       bus.getPublisher().pub(`acars_messages_${type}`, null, true, false);
     });
   };
+  var fetchAcarsStatus = (bus) => {
+    return new Promise((resolve) => {
+      const sub = bus.getSubscriber().on(`acars_status_response`).handle((v) => {
+        sub.destroy();
+        resolve(v);
+      });
+      bus.getPublisher().pub(`acars_status_req`, null, true, false);
+    });
+  };
   var acarsService = (bus) => {
     const publisher = bus.getPublisher();
     bus.getSubscriber().on("acars_message_send").handle((v) => {
       if (acars.client)
-        acars.client[v.key].apply(void 0, Array.isArray(v.arguments) ? v.arguments : Object.value(v.arguments));
+        acars.client[v.key].apply(
+          void 0,
+          Array.isArray(v.arguments) ? v.arguments : Object.value(v.arguments)
+        );
       return true;
     });
     bus.getSubscriber().on("acars_message_ack").handle((v) => {
@@ -733,6 +813,18 @@
       publisher.pub(
         "acars_messages_send_response",
         { messages: acars.messages.filter((e) => e.type === "send") },
+        true,
+        false
+      );
+      return true;
+    });
+    bus.getSubscriber().on("acars_status_req").handle((v) => {
+      publisher.pub(
+        "acars_status_response",
+        {
+          active: acars.client ? acars.client.active_station : null,
+          pending: acars.client ? acars.client.pending_station : null
+        },
         true,
         false
       );
@@ -771,6 +863,9 @@
           }
         }
       );
+      acars.client._stationCallback = (opt) => {
+        publisher.getPublisher().pub("acars_station_status", opt, true, false);
+      };
     });
   };
   var AcarsService_default = acarsService;
@@ -1685,6 +1780,554 @@
       ];
     }
   };
+  var DatalinkStatusPage = class extends import_msfs_wt21_fmc4.WT21FmcPage {
+    constructor(bus, screen, props, fms, baseInstrument, renderCallback) {
+      super(bus, screen, props, fms, baseInstrument, renderCallback);
+      this.clockField = import_msfs_wt21_fmc4.FmcCmuCommons.createClockField(this, this.bus);
+      this.facility = import_msfs_sdk4.Subject.create("");
+      this.send = import_msfs_sdk4.Subject.create("NOTIFY");
+      this.status = import_msfs_sdk4.Subject.create(null);
+      this.activeStation = import_msfs_sdk4.Subject.create("");
+      this.facilityField = new import_msfs_sdk4.default.TextInputField(this, {
+        formatter: new import_msfs_wt21_fmc4.StringInputFormat({
+          nullValueString: "\u25A1\u25A1\u25A1\u25A1\u25A1\u25A1\u25A1\u25A1\u25A1\u25A1\u25A1",
+          maxLength: 11
+        }),
+        onSelected: async (scratchpadContents) => {
+          this.facility.set(scratchpadContents);
+          return true;
+        }
+      }).bind(this.facility);
+      this.sendButton = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "",
+          /** @inheritDoc */
+          format(value) {
+            return `<${value}[blue]`;
+          }
+        },
+        onSelected: async () => {
+          if (this.activeStation.get()) {
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendLogoffRequest",
+                arguments: []
+              },
+              true,
+              false
+            );
+          } else {
+            if (this.facility.get().length)
+              this.bus.getPublisher().pub(
+                "acars_message_send",
+                {
+                  key: "sendLogonRequest",
+                  arguments: [this.facility.get()]
+                },
+                true,
+                false
+              );
+          }
+          return true;
+        }
+      }).bind(this.send);
+      this.statusField = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "----",
+          /** @inheritDoc */
+          format(value) {
+            return value;
+          }
+        }
+      }).bind(this.status);
+      this.bus.getSubscriber().on("acars_station_status").handle((message) => {
+        if (message.active) {
+          this.status.set(`${message.active}[green]`);
+          this.activeStation.set(true);
+          this.send.set("LOGOFF");
+          this.facility.set("");
+        } else {
+          if (message.pending) {
+            this.status.set(`${message.pending} NOTIFIED[green]`);
+            this.send.set("NOTIFY AGAIN");
+          } else {
+            this.send.set("NOTIFY");
+            this.status.set(null);
+          }
+          this.activeStation.set(false);
+        }
+        this.invalidate();
+      });
+    }
+    render() {
+      return [
+        [
+          ["DL[blue]", "", "STATUS[blue]"],
+          ["FACILITY[blue]"],
+          [this.facilityField],
+          ["STATUS[blue]"],
+          [this.statusField],
+          [],
+          [this.sendButton],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [
+            import_msfs_sdk4.PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+            "",
+            this.clockField
+          ]
+        ]
+      ];
+    }
+  };
+  var DatalinkDirectToPage = class extends import_msfs_wt21_fmc4.WT21FmcPage {
+    constructor(bus, screen, props, fms, baseInstrument, renderCallback) {
+      super(bus, screen, props, fms, baseInstrument, renderCallback);
+      this.clockField = import_msfs_wt21_fmc4.FmcCmuCommons.createClockField(this, this.bus);
+      this.facility = import_msfs_sdk4.Subject.create("");
+      this.send = import_msfs_sdk4.Subject.create(false);
+      this.reason = import_msfs_sdk4.Subject.create(0);
+      this.opts = ["WEATHER", "A/C PERF"];
+      this.station = import_msfs_sdk4.Subject.create(null);
+      this.bus.getSubscriber().on("acars_station_status").handle((message) => {
+        this.station.set(message.active);
+        this.checkReady();
+        this.invalidate();
+      });
+      this.stationField = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "----",
+          /** @inheritDoc */
+          format(value) {
+            return `${value}[blue]`;
+          }
+        }
+      }).bind(this.station);
+      for (let i = 0; i < 4; i++) {
+        this[`freeText${i}`] = import_msfs_sdk4.Subject.create("");
+        this[`freeTextField${i}`] = new import_msfs_sdk4.default.TextInputField(this, {
+          formatter: new import_msfs_wt21_fmc4.StringInputFormat({
+            nullValueString: "(----------------------)[blue]",
+            maxLength: 24
+          }),
+          onSelected: async (scratchpadContents) => {
+            this[`freeText${i}`].set(scratchpadContents);
+            this.checkReady();
+            return true;
+          }
+        }).bind(this[`freeText${i}`]);
+      }
+      fetchAcarsStatus(this.bus).then((res) => {
+        this.station.set(res.active);
+        this.invalidate();
+      });
+      this.sendButton = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "SEND",
+          /** @inheritDoc */
+          format(value) {
+            return `SEND[${value ? "blue" : "white"}]`;
+          }
+        },
+        onSelected: async () => {
+          if (this.send.get()) {
+            const freeText = Array(4).fill().map((_, i) => this[`freeText${i}`].get()).filter((e) => e && e.length).join(" ");
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendDirectTo",
+                arguments: [
+                  this.facility.get(),
+                  this.reason.get() === 0 ? "weather" : "performance",
+                  freeText
+                ]
+              },
+              true,
+              false
+            );
+            [this.facility].forEach((e) => e.set(""));
+            Array(4).fill().forEach((_, i) => this[`freeText${i}`].set(""));
+            this.checkReady();
+          }
+          return true;
+        }
+      }).bind(this.send);
+      this.facilityField = new import_msfs_sdk4.default.TextInputField(this, {
+        formatter: new import_msfs_wt21_fmc4.StringInputFormat({
+          nullValueString: "\u25A1\u25A1\u25A1\u25A1\u25A1",
+          maxLength: 5
+        }),
+        onSelected: async (scratchpadContents) => {
+          this.facility.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        }
+      }).bind(this.facility);
+      this.reasonField = new import_msfs_sdk4.default.SwitchLabel(this, {
+        optionStrings: this.opts,
+        activeStyle: "green"
+      }).bind(this.reason);
+    }
+    checkReady() {
+      const array = [this.facility, this.station];
+      this.send.set(
+        !array.find((e) => {
+          const v = e.get();
+          return !v || !v.length;
+        })
+      );
+    }
+    render() {
+      return [
+        [
+          ["DL[blue]", this.PagingIndicator, "DIRECT CLX REQ[blue]"],
+          ["WAYPOINT[blue]"],
+          [this.facilityField],
+          ["REASON[blue]"],
+          [this.reasonField],
+          [],
+          [],
+          [],
+          [],
+          [""],
+          [this.stationField, this.sendButton],
+          [""],
+          [
+            import_msfs_sdk4.PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+            "",
+            this.clockField
+          ]
+        ],
+        [
+          ["DL[blue]", this.PagingIndicator, "DIRECT CLX REQ[blue]"],
+          [" REMARKS[blue]"],
+          [this.freeTextField0],
+          [],
+          [this.freeTextField1],
+          [],
+          [this.freeTextField2],
+          [],
+          [this.freeTextField3],
+          [],
+          [this.stationField, this.sendButton],
+          [""],
+          [
+            import_msfs_sdk4.PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+            "",
+            this.clockField
+          ]
+        ]
+      ];
+    }
+  };
+  var DatalinkSpeedPage = class extends import_msfs_wt21_fmc4.WT21FmcPage {
+    constructor(bus, screen, props, fms, baseInstrument, renderCallback) {
+      super(bus, screen, props, fms, baseInstrument, renderCallback);
+      this.clockField = import_msfs_wt21_fmc4.FmcCmuCommons.createClockField(this, this.bus);
+      this.send = import_msfs_sdk4.Subject.create(false);
+      this.value = import_msfs_sdk4.Subject.create("");
+      this.reason = import_msfs_sdk4.Subject.create(0);
+      this.unit = import_msfs_sdk4.Subject.create(0);
+      this.opts = ["WEATHER", "A/C PERF"];
+      this.units = ["KTS", "MACH"];
+      this.station = import_msfs_sdk4.Subject.create(null);
+      this.bus.getSubscriber().on("acars_station_status").handle((message) => {
+        this.station.set(message.active);
+        this.checkReady();
+        this.invalidate();
+      });
+      this.stationField = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "----",
+          /** @inheritDoc */
+          format(value) {
+            return `${value}[blue]`;
+          }
+        }
+      }).bind(this.station);
+      for (let i = 0; i < 4; i++) {
+        this[`freeText${i}`] = import_msfs_sdk4.Subject.create("");
+        this[`freeTextField${i}`] = new import_msfs_sdk4.default.TextInputField(this, {
+          formatter: new import_msfs_wt21_fmc4.StringInputFormat({
+            nullValueString: "(----------------------)[blue]",
+            maxLength: 24
+          }),
+          onSelected: async (scratchpadContents) => {
+            this[`freeText${i}`].set(scratchpadContents);
+            this.checkReady();
+            return true;
+          }
+        }).bind(this[`freeText${i}`]);
+      }
+      this.sendButton = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "SEND",
+          /** @inheritDoc */
+          format(value) {
+            return `SEND[${value ? "blue" : "white"}]`;
+          }
+        },
+        onSelected: async () => {
+          if (this.send.get()) {
+            const freeText = Array(4).fill().map((_, i) => this[`freeText${i}`].get()).filter((e) => e && e.length).join(" ");
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendSpeedChange",
+                arguments: [
+                  this.unit.get() === 0 ? "knots" : "mach",
+                  this.value.get(),
+                  this.reason.get() === 0 ? "weather" : "performance",
+                  freeText
+                ]
+              },
+              true,
+              false
+            );
+            [this.value].forEach((e) => e.set(""));
+            Array(4).fill().forEach((_, i) => this[`freeText${i}`].set(""));
+            this.checkReady();
+          }
+          return true;
+        }
+      }).bind(this.send);
+      fetchAcarsStatus(this.bus).then((res) => {
+        this.station.set(res.active);
+        this.invalidate();
+      });
+      this.speedField = new import_msfs_sdk4.default.TextInputField(this, {
+        formatter: new import_msfs_wt21_fmc4.StringInputFormat({
+          nullValueString: "\u25A1\u25A1\u25A1\u25A1",
+          maxLength: 4,
+          format(value) {
+            return `${this.unit.get() === 1 ? "M" : ""}${value}`;
+          }
+        }),
+        onSelected: async (scratchpadContents) => {
+          if (Number.isNaN(Number.parseFloat(scratchpadContents))) return false;
+          this.value.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        }
+      }).bind(this.value);
+      this.reasonField = new import_msfs_sdk4.default.SwitchLabel(this, {
+        optionStrings: this.opts,
+        activeStyle: "green"
+      }).bind(this.reason);
+      this.unitField = new import_msfs_sdk4.default.SwitchLabel(this, {
+        optionStrings: this.units,
+        activeStyle: "green"
+      }).bind(this.unit);
+    }
+    checkReady() {
+      const array = [this.value, this.station];
+      this.send.set(
+        !array.find((e) => {
+          const v = e.get();
+          return typeof v === "string" ? v.length === 0 : false;
+        })
+      );
+    }
+    render() {
+      return [
+        [
+          ["DL[blue]", this.PagingIndicator, "SPEED CLX REQ[blue]"],
+          ["SPEED[blue]", "UNIT[blue]"],
+          [this.speedField, this.unitField],
+          ["REASON[blue]"],
+          [this.reasonField],
+          [],
+          [],
+          [],
+          [],
+          [""],
+          [this.stationField, this.sendButton],
+          [""],
+          [
+            import_msfs_sdk4.PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+            "",
+            this.clockField
+          ]
+        ],
+        [
+          ["DL[blue]", this.PagingIndicator, "SPEED CLX REQ[blue]"],
+          [" REMARKS[blue]"],
+          [this.freeTextField0],
+          [],
+          [this.freeTextField1],
+          [],
+          [this.freeTextField2],
+          [],
+          [this.freeTextField3],
+          [],
+          [this.stationField, this.sendButton],
+          [""],
+          [
+            import_msfs_sdk4.PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+            "",
+            this.clockField
+          ]
+        ]
+      ];
+    }
+  };
+  var DatalinkLevelPage = class extends import_msfs_wt21_fmc4.WT21FmcPage {
+    constructor(bus, screen, props, fms, baseInstrument, renderCallback) {
+      super(bus, screen, props, fms, baseInstrument, renderCallback);
+      this.clockField = import_msfs_wt21_fmc4.FmcCmuCommons.createClockField(this, this.bus);
+      this.send = import_msfs_sdk4.Subject.create(false);
+      this.value = import_msfs_sdk4.Subject.create("");
+      this.reason = import_msfs_sdk4.Subject.create(0);
+      this.unit = import_msfs_sdk4.Subject.create(0);
+      this.opts = ["WEATHER", "A/C PERF"];
+      this.units = ["CLIMB", "DESCEND"];
+      this.station = import_msfs_sdk4.Subject.create(null);
+      this.bus.getSubscriber().on("acars_station_status").handle((message) => {
+        this.station.set(message.active);
+        this.checkReady();
+        this.invalidate();
+      });
+      this.stationField = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "----",
+          /** @inheritDoc */
+          format(value) {
+            return `${value}[blue]`;
+          }
+        }
+      }).bind(this.station);
+      fetchAcarsStatus(this.bus).then((res) => {
+        this.station.set(res.active);
+        this.invalidate();
+      });
+      for (let i = 0; i < 4; i++) {
+        this[`freeText${i}`] = import_msfs_sdk4.Subject.create("");
+        this[`freeTextField${i}`] = new import_msfs_sdk4.default.TextInputField(this, {
+          formatter: new import_msfs_wt21_fmc4.StringInputFormat({
+            nullValueString: "(----------------------)[blue]",
+            maxLength: 24
+          }),
+          onSelected: async (scratchpadContents) => {
+            this[`freeText${i}`].set(scratchpadContents);
+            this.checkReady();
+            return true;
+          }
+        }).bind(this[`freeText${i}`]);
+      }
+      this.sendButton = new import_msfs_sdk4.default.DisplayField(this, {
+        formatter: {
+          nullValueString: "SEND",
+          /** @inheritDoc */
+          format(value) {
+            return `SEND[${value ? "blue" : "white"}]`;
+          }
+        },
+        onSelected: async () => {
+          if (this.send.get()) {
+            const freeText = Array(4).fill().map((_, i) => this[`freeText${i}`].get()).filter((e) => e && e.length).join(" ");
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendLevelChange",
+                arguments: [
+                  this.value.get(),
+                  this.unit.get() === 0,
+                  this.reason.get() === 0 ? "weather" : "performance",
+                  freeText
+                ]
+              },
+              true,
+              false
+            );
+            [this.value].forEach((e) => e.set(""));
+            Array(4).fill().forEach((_, i) => this[`freeText${i}`].set(""));
+            this.checkReady();
+          }
+          return true;
+        }
+      }).bind(this.send);
+      this.levelField = new import_msfs_sdk4.default.TextInputField(this, {
+        formatter: new import_msfs_wt21_fmc4.StringInputFormat({
+          nullValueString: "\u25A1\u25A1\u25A1",
+          maxLength: 3,
+          format(value) {
+            return `FL${value}`;
+          }
+        }),
+        onSelected: async (scratchpadContents) => {
+          if (scratchpadContents.startsWith("FL"))
+            scratchpadContents = scratchpadContents.substr(2);
+          if (Number.isNaN(Number.parseInt(scratchpadContents))) return false;
+          this.value.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        }
+      }).bind(this.value);
+      this.reasonField = new import_msfs_sdk4.default.SwitchLabel(this, {
+        optionStrings: this.opts,
+        activeStyle: "green"
+      }).bind(this.reason);
+      this.unitField = new import_msfs_sdk4.default.SwitchLabel(this, {
+        optionStrings: this.units,
+        activeStyle: "green"
+      }).bind(this.unit);
+    }
+    checkReady() {
+      const array = [this.value, this.station];
+      this.send.set(
+        !array.find((e) => {
+          const v = e.get();
+          return v === null || typeof v === "string" ? v.length === 0 : false;
+        })
+      );
+    }
+    render() {
+      return [
+        [
+          ["DL[blue]", this.PagingIndicator, "LEVEL CLX REQ[blue]"],
+          ["FL[blue]", "DIR[blue]"],
+          [this.levelField, this.unitField],
+          ["REASON[blue]"],
+          [this.reasonField],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [this.stationField, this.sendButton],
+          [""],
+          [
+            import_msfs_sdk4.PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+            "",
+            this.clockField
+          ]
+        ],
+        [
+          ["DL[blue]", this.PagingIndicator, "LEVEL CLX REQ[blue]"],
+          [" REMARKS[blue]"],
+          [this.freeTextField0],
+          [],
+          [this.freeTextField1],
+          [],
+          [this.freeTextField2],
+          [],
+          [this.freeTextField3],
+          [],
+          [this.stationField, this.sendButton],
+          [],
+          [
+            import_msfs_sdk4.PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+            "",
+            this.clockField
+          ]
+        ]
+      ];
+    }
+  };
 
   // src/PerfPageExtension.mjs
   var import_msfs_wt21_fmc5 = __require("@microsoft/msfs-wt21-fmc");
@@ -1791,8 +2434,7 @@
     }
     registerFmcExtensions(context) {
       const name = SimVar.GetSimVarValue("TITLE", "string");
-      if (name !== "Cessna Citation CJ4")
-        return;
+      if (name !== "Cessna Citation CJ4") return;
       SimVar.SetSimVarValue("L:CJ4_PLUS_ACTIVE", "number", 1);
       this.renderer = context.renderer;
       this.cduRenderer = new CduRenderer_default(this.renderer, this.binder);
@@ -1835,6 +2477,30 @@
       context.addPluginPageRoute(
         "/datalink-extra/message",
         DatalinkMessagePage,
+        void 0,
+        {}
+      );
+      context.addPluginPageRoute(
+        "/datalink-extra/cpdlc/status",
+        DatalinkStatusPage,
+        void 0,
+        {}
+      );
+      context.addPluginPageRoute(
+        "/datalink-extra/cpdlc/direct",
+        DatalinkDirectToPage,
+        void 0,
+        {}
+      );
+      context.addPluginPageRoute(
+        "/datalink-extra/cpdlc/speed",
+        DatalinkSpeedPage,
+        void 0,
+        {}
+      );
+      context.addPluginPageRoute(
+        "/datalink-extra/cpdlc/level",
+        DatalinkLevelPage,
         void 0,
         {}
       );
