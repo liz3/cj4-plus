@@ -65,14 +65,20 @@ const responseOptions = (c) => {
   return null;
 };
 export const messageStateUpdate = (state, message) => {
-  if (message.type === "cpdlc" && message.content === "LOGON ACCEPTED") {
-    if (state._stationCallback)
-      state._stationCallback({ active: message.from, pending: null });
+  if (
+    message.type === "cpdlc" &&
+    message.content === "LOGON ACCEPTED" &&
+    state.pending_station
+  ) {
+    if (state._stationCallback) state._stationCallback(message.from);
     state.active_station = message.from;
     state.pending_station = null;
-  } else if (message.type === "cpdlc" && message.content === "LOGOFF") {
-    if (state._stationCallback)
-      state._stationCallback({ active: null, pending: null });
+  } else if (
+    message.type === "cpdlc" &&
+    message.content === "LOGOFF" &&
+    state.active_station
+  ) {
+    if (state._stationCallback) state._stationCallback(null);
     state.active_station = null;
     state.pending_station = null;
   }
@@ -87,7 +93,6 @@ const cpdlcStringBuilder = (state, request, replyId = "") => {
 const poll = (state) => {
   state._interval = setTimeout(() => {
     sendAcarsMessage(state, "SERVER", "Nothing", "POLL").then((response) => {
-      console.log(response);
       if (response.ok) {
         response.text().then((raw) => {
           for (const message of parseMessages(raw)) {
@@ -191,7 +196,29 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
     }
     return text.startsWith("ok");
   };
+  state.sendPositionReport = async (
+    fl,
+    mach,
+    wp,
+    wpEta,
+    nextWp,
+    nextWpEta,
+    followWp,
+  ) => {
+    if (!state.active_station) return;
+    const content =
+      `OVER ${wp} AT ${wpEta}Z FL${fl}, ESTIMATING ${nextWp} AT ${nextWpEta}Z, THEREAFTER ${followWp}. CURRENT SPEED M${mach}`.toUpperCase();
+    const response = await sendAcarsMessage(
+      state,
+      state.active_station,
+      `/DATA1/*/*/*/*/FL${fl}/*/${mach}/\n\n${content}`,
+      "position",
+    );
+    addMessage(state, content);
+    const text = await response.text();
 
+    return text.startsWith("ok");
+  };
   state.sendLogonRequest = async (to) => {
     if (to === state.active_station) return;
     state.pending_station = to;
@@ -203,24 +230,14 @@ export const createClient = (code, callsign, aicraftType, messageCallback) => {
     );
     if (!response.ok) return false;
     const text = await response.text();
-
-    const ok = text.startsWith("ok");
-    if (ok) {
-      if (state._stationCallback)
-        state._stationCallback({
-          active: null,
-          pending: state.pending_station,
-        });
-    }
-    return ok;
+    return text.startsWith("ok");
   };
 
   state.sendLogoffRequest = async () => {
     if (!state.active_station) return;
     const station = state.active_station;
     state.active_station = null;
-    if (state._stationCallback)
-      state._stationCallback({ active: null, pending: null });
+    if (state._stationCallback) state._stationCallback(null);
     const response = await sendAcarsMessage(
       state,
       station,

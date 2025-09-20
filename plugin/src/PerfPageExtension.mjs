@@ -38,11 +38,14 @@ class PerfInitPageExtension extends AbstractFmcPageExtension {
       const { weights } = json;
       const pax = Number.parseInt(weights.pax_count_actual);
       const paxWeight = Number.parseFloat(weights.pax_weight);
+      const unit = json.params.units;
+      const simUnitVar = unit === "kgs" ? "kilograms" : "pounds";
+
       if (pax > 0) {
         //CAPT
         SimVar.SetSimVarValue(
           "PAYLOAD STATION WEIGHT:1",
-          "kilograms",
+          simUnitVar,
           paxWeight,
         );
       }
@@ -50,7 +53,7 @@ class PerfInitPageExtension extends AbstractFmcPageExtension {
         //FO
         SimVar.SetSimVarValue(
           "PAYLOAD STATION WEIGHT:2",
-          "kilograms",
+          simUnitVar,
           paxWeight,
         );
       }
@@ -58,7 +61,7 @@ class PerfInitPageExtension extends AbstractFmcPageExtension {
         //FRONT
         SimVar.SetSimVarValue(
           "PAYLOAD STATION WEIGHT:3",
-          "kilograms",
+          simUnitVar,
           paxWeight * (pax > 3 ? 2 : 1),
         );
       }
@@ -66,20 +69,17 @@ class PerfInitPageExtension extends AbstractFmcPageExtension {
         //MAIN
         SimVar.SetSimVarValue(
           "PAYLOAD STATION WEIGHT:4",
-          "kilograms",
+          simUnitVar,
           paxWeight * (pax - 4),
         );
       }
 
       const cargo = Number.parseInt(weights.cargo);
-      SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:5", "kilograms", cargo /2);
-      SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:6", "kilograms", cargo /1);
+      SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:5", simUnitVar, cargo / 2);
+      SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:6", simUnitVar, cargo / 1);
 
       const fuel = Number.parseInt(json.fuel.plan_ramp) / 2;
-      const ratio = SimVar.GetSimVarValue(
-        "FUEL WEIGHT PER GALLON",
-        "kilograms",
-      );
+      const ratio = SimVar.GetSimVarValue("FUEL WEIGHT PER GALLON", simUnitVar);
       SimVar.SetSimVarValue(
         "FUEL TANK LEFT MAIN QUANTITY",
         "gallons",

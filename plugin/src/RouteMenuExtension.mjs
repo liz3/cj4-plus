@@ -105,6 +105,10 @@ class RouteMenuExtension extends AbstractFmcPageExtension {
             msfsSdk.ICAO.getFacilityType(icao),
             icao,
           );
+          if(entry.type === "vor" && fac.name === entry.name) {
+            found = fac;
+            break;
+          }
           if (
             lon.toFixed(4) === fac.lon.toFixed(4) &&
             lat.toFixed(4) === fac.lat.toFixed(4)

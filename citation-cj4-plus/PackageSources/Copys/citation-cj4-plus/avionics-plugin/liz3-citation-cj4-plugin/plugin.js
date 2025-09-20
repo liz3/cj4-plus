@@ -332,6 +332,10 @@
               import_msfs_sdk2.default.ICAO.getFacilityType(icao),
               icao
             );
+            if (entry.type === "vor" && fac.name === entry.name) {
+              found = fac;
+              break;
+            }
             if (lon.toFixed(4) === fac.lon.toFixed(4) && lat.toFixed(4) === fac.lat.toFixed(4)) {
               found = fac;
               break;
@@ -518,14 +522,12 @@
     return null;
   };
   var messageStateUpdate = (state, message) => {
-    if (message.type === "cpdlc" && message.content === "LOGON ACCEPTED") {
-      if (state._stationCallback)
-        state._stationCallback({ active: message.from, pending: null });
+    if (message.type === "cpdlc" && message.content === "LOGON ACCEPTED" && state.pending_station) {
+      if (state._stationCallback) state._stationCallback(message.from);
       state.active_station = message.from;
       state.pending_station = null;
-    } else if (message.type === "cpdlc" && message.content === "LOGOFF") {
-      if (state._stationCallback)
-        state._stationCallback({ active: null, pending: null });
+    } else if (message.type === "cpdlc" && message.content === "LOGOFF" && state.active_station) {
+      if (state._stationCallback) state._stationCallback(null);
       state.active_station = null;
       state.pending_station = null;
     }
@@ -540,7 +542,6 @@
   var poll = (state) => {
     state._interval = setTimeout(() => {
       sendAcarsMessage(state, "SERVER", "Nothing", "POLL").then((response) => {
-        console.log(response);
         if (response.ok) {
           response.text().then((raw) => {
             for (const message of parseMessages(raw)) {
@@ -637,6 +638,21 @@
       }
       return text.startsWith("ok");
     };
+    state.sendPositionReport = async (fl, mach, wp, wpEta, nextWp, nextWpEta, followWp) => {
+      if (!state.active_station) return;
+      const content = `OVER ${wp} AT ${wpEta}Z FL${fl}, ESTIMATING ${nextWp} AT ${nextWpEta}Z, THEREAFTER ${followWp}. CURRENT SPEED M${mach}`.toUpperCase();
+      const response = await sendAcarsMessage(
+        state,
+        state.active_station,
+        `/DATA1/*/*/*/*/FL${fl}/*/${mach}/
+
+${content}`,
+        "position"
+      );
+      addMessage(state, content);
+      const text = await response.text();
+      return text.startsWith("ok");
+    };
     state.sendLogonRequest = async (to) => {
       if (to === state.active_station) return;
       state.pending_station = to;
@@ -648,22 +664,13 @@
       );
       if (!response.ok) return false;
       const text = await response.text();
-      const ok = text.startsWith("ok");
-      if (ok) {
-        if (state._stationCallback)
-          state._stationCallback({
-            active: null,
-            pending: state.pending_station
-          });
-      }
-      return ok;
+      return text.startsWith("ok");
     };
     state.sendLogoffRequest = async () => {
       if (!state.active_station) return;
       const station = state.active_station;
       state.active_station = null;
-      if (state._stationCallback)
-        state._stationCallback({ active: null, pending: null });
+      if (state._stationCallback) state._stationCallback(null);
       const response = await sendAcarsMessage(
         state,
         station,
@@ -2357,42 +2364,41 @@
         const { weights } = json;
         const pax = Number.parseInt(weights.pax_count_actual);
         const paxWeight = Number.parseFloat(weights.pax_weight);
+        const unit = json.params.units;
+        const simUnitVar = unit === "kgs" ? "kilograms" : "pounds";
         if (pax > 0) {
           SimVar.SetSimVarValue(
             "PAYLOAD STATION WEIGHT:1",
-            "kilograms",
+            simUnitVar,
             paxWeight
           );
         }
         if (pax > 1) {
           SimVar.SetSimVarValue(
             "PAYLOAD STATION WEIGHT:2",
-            "kilograms",
+            simUnitVar,
             paxWeight
           );
         }
         if (pax > 2) {
           SimVar.SetSimVarValue(
             "PAYLOAD STATION WEIGHT:3",
-            "kilograms",
+            simUnitVar,
             paxWeight * (pax > 3 ? 2 : 1)
           );
         }
         if (pax > 4) {
           SimVar.SetSimVarValue(
             "PAYLOAD STATION WEIGHT:4",
-            "kilograms",
+            simUnitVar,
             paxWeight * (pax - 4)
           );
         }
         const cargo = Number.parseInt(weights.cargo);
-        SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:5", "kilograms", cargo / 2);
-        SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:6", "kilograms", cargo / 1);
+        SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:5", simUnitVar, cargo / 2);
+        SimVar.SetSimVarValue("PAYLOAD STATION WEIGHT:6", simUnitVar, cargo / 1);
         const fuel = Number.parseInt(json.fuel.plan_ramp) / 2;
-        const ratio = SimVar.GetSimVarValue(
-          "FUEL WEIGHT PER GALLON",
-          "kilograms"
-        );
+        const ratio = SimVar.GetSimVarValue("FUEL WEIGHT PER GALLON", simUnitVar);
         SimVar.SetSimVarValue(
           "FUEL TANK LEFT MAIN QUANTITY",
           "gallons",
