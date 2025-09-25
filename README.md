@@ -11,4 +11,4 @@ This is a enhancement package for the Cessna CJ4 in MSFS2020/MSFS2024.
 **NOTE:** Settings for simbrief & Hoppie are on the second IDX page.
 
 # Download
-Download [Latest Community Package](/releases/latest)
+Download [Latest Community Package](https://github.com/liz3/cj4-plus/releases)
