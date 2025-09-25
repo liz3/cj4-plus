@@ -70,9 +70,24 @@
     constructor(renderer, binder) {
       this.renderer = renderer;
       this.binder = binder;
+      this.active = GetStoredData("cj4_plus_winwing_setting") === "true";
       this.rowData = Array.from({ length: MF_CDU_ROWS * MF_CDU_COLS }, () => []);
       this.socketUri = !!this.binder.isPrimaryInstrument ? MF_CAPT_URL : MF_FO_URL;
       this.binder.bus.getSubscriber().on("simTime").atFrequency(4).handle(() => this.update());
+      this.binder.bus.getSubscriber().on("cj4_plus_winwing_setting").handle((v) => {
+        this.active = v;
+        if (!this.active) {
+          if (this.socket) {
+            try {
+              this.socket.close();
+            } catch (err) {
+            }
+            this.socket = null;
+          }
+        } else {
+          this.connect();
+        }
+      });
       const oldRenderToDom = renderer.renderToDom.bind(renderer);
       renderer.renderToDom = (...args) => {
         oldRenderToDom(...args);
@@ -92,14 +107,20 @@
         ["yellow", MfColour.Yellow],
         ["white", MfColour.White]
       ]);
-      this.connect();
+      if (this.active)
+        this.connect();
     }
     connect() {
       this.socket = new WebSocket(this.socketUri);
       this.socket.onerror = () => {
-        setTimeout(() => {
-          this.connect();
-        }, 5e3);
+        try {
+          this.socket.close();
+        } catch (err) {
+        }
+        if (this.active)
+          setTimeout(() => {
+            this.connect();
+          }, 5e3);
       };
       this.socket.onopen = () => {
         this.needsUpdate = true;
@@ -121,7 +142,9 @@
         }
       }
       if (this.socket && this.socket.readyState === 1) {
-        this.socket.send(JSON.stringify({ Target: "Display", Data: this.rowData }));
+        this.socket.send(
+          JSON.stringify({ Target: "Display", Data: this.rowData })
+        );
       }
     }
     copyWtColDataToOutput(rowIndex, colIndex) {
@@ -173,6 +196,15 @@
       super(page);
       this.simbriefId = import_msfs_sdk.Subject.create(GetStoredData("cj4_plus_simbrief_id"));
       this.hoppieId = import_msfs_sdk.Subject.create(GetStoredData("cj4_plus_hoppie_code"));
+      this.cduSetting = import_msfs_sdk.Subject.create(GetStoredData("cj4_plus_winwing_setting") === "true" ? 1 : 0);
+      this.cduSwitch = new import_msfs_sdk.default.SwitchLabel(page, {
+        optionStrings: ["OFF", "ON"],
+        activeStyle: "green"
+      }).bind(this.cduSetting);
+      this.cduSetting.sub((v) => {
+        SetStoredData("cj4_plus_winwing_setting", v === 1 ? "true" : "false");
+        page.bus.getPublisher().pub("cj4_plus_winwing_setting", v === 1);
+      });
       this.simbriefField = new import_msfs_sdk.default.TextInputField(page, {
         formatter: new import_msfs_wt21_fmc.StringInputFormat({ nullValueString: "-----" }),
         onSelected: async (scratchpadContents) => {
@@ -235,9 +267,9 @@
       }).bind(this.hoppieId);
     }
     onPageRendered(renderedTemplates) {
-      renderedTemplates[0][9] = [" Simbrief ID[blue]"];
-      renderedTemplates[0][10] = [this.simbriefField];
-      renderedTemplates[0][11] = [" Hoppie code[blue]"];
+      renderedTemplates[0][9] = [" SIMBRIEF ID[blue]", "WINWING CDU[blue]"];
+      renderedTemplates[0][10] = [this.simbriefField, this.cduSwitch];
+      renderedTemplates[0][11] = [" HOPPIE CODE[blue]"];
       renderedTemplates[0][12] = [this.hoppieField];
     }
   };
@@ -521,15 +553,22 @@
     if (map[c]) return [...map[c], "STANDBY"];
     return null;
   };
+  var forwardStateUpdate = (state) => {
+    if (state._stationCallback)
+      state._stationCallback({
+        active: state.active_station,
+        pending: state.pending_station
+      });
+  };
   var messageStateUpdate = (state, message) => {
     if (message.type === "cpdlc" && message.content === "LOGON ACCEPTED" && state.pending_station) {
-      if (state._stationCallback) state._stationCallback(message.from);
       state.active_station = message.from;
       state.pending_station = null;
+      forwardStateUpdate(state);
     } else if (message.type === "cpdlc" && message.content === "LOGOFF" && state.active_station) {
-      if (state._stationCallback) state._stationCallback(null);
       state.active_station = null;
       state.pending_station = null;
+      forwardStateUpdate(state);
     }
   };
   var cpdlcStringBuilder = (state, request, replyId = "") => {
@@ -547,6 +586,15 @@
             for (const message of parseMessages(raw)) {
               if (message.from === state.callsign && message.type === "inforeq") {
                 continue;
+              }
+              if (state.active_station && message.from === state.active_station && message.content.startsWith("HANDOVER")) {
+                state.active_station = null;
+                const station = message.content.split(" ")[1];
+                if (station) {
+                  const corrected = station.trim().replace("@", "");
+                  state.sendLogonRequest(corrected);
+                  return;
+                }
               }
               message._id = state.idc++;
               messageStateUpdate(state, message);
@@ -663,6 +711,7 @@ ${content}`,
         "cpdlc"
       );
       if (!response.ok) return false;
+      forwardStateUpdate(state);
       const text = await response.text();
       return text.startsWith("ok");
     };
@@ -670,7 +719,6 @@ ${content}`,
       if (!state.active_station) return;
       const station = state.active_station;
       state.active_station = null;
-      if (state._stationCallback) state._stationCallback(null);
       const response = await sendAcarsMessage(
         state,
         station,
@@ -679,6 +727,7 @@ ${content}`,
       );
       if (!response.ok) return false;
       const text = await response.text();
+      forwardStateUpdate(state);
       return text.startsWith("ok");
     };
     state.sendOceanicClearance = async (cs, to, entryPoint, eta, level, mach, freeText) => {
@@ -897,8 +946,8 @@ ${content}`,
             }
           )
         };
-        if (current[current.length - 1].length < 5) {
-          current[current.length - 1].unshift(entry);
+        if (current[0].length < 5) {
+          current[0].unshift(entry);
         } else {
           current.unshift([entry]);
         }
@@ -920,8 +969,8 @@ ${content}`,
               }
             )
           };
-          if (current[current.length - 1].length < 5) {
-            current[current.length - 1].unshift(entry);
+          if (current[0].length < 5) {
+            current[0].unshift(entry);
           } else {
             current.unshift([entry]);
           }
@@ -970,8 +1019,8 @@ ${content}`,
             }
           )
         };
-        if (current[current.length - 1].length < 5) {
-          current[current.length - 1].unshift(entry);
+        if (current[0].length < 5) {
+          current[0].unshift(entry);
         } else {
           current.unshift([entry]);
         }
@@ -1004,8 +1053,8 @@ ${content}`,
               }
             )
           };
-          if (current[current.length - 1].length < 5) {
-            current[current.length - 1].unshift(entry);
+          if (current[0].length < 5) {
+            current[0].unshift(entry);
           } else {
             current.unshift([entry]);
           }

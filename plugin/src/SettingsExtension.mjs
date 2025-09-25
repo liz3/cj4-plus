@@ -14,6 +14,15 @@ class PlusSettingsExtension extends AbstractFmcPageExtension {
     super(page);
     this.simbriefId = Subject.create(GetStoredData("cj4_plus_simbrief_id"));
     this.hoppieId = Subject.create(GetStoredData("cj4_plus_hoppie_code"));
+    this.cduSetting = Subject.create(GetStoredData("cj4_plus_winwing_setting") === "true" ? 1 : 0);
+    this.cduSwitch = new msfsSdk.SwitchLabel(page, {
+      optionStrings: ["OFF", "ON"],
+      activeStyle: "green",
+    }).bind(this.cduSetting);
+    this.cduSetting.sub(v => {
+      SetStoredData("cj4_plus_winwing_setting", v === 1 ? "true" : "false");
+   page.bus.getPublisher().pub("cj4_plus_winwing_setting", v === 1);
+    });
     this.simbriefField = new msfsSdk.TextInputField(page, {
       formatter: new StringInputFormat({ nullValueString: "-----" }),
       onSelected: async (scratchpadContents) => {
@@ -77,10 +86,10 @@ class PlusSettingsExtension extends AbstractFmcPageExtension {
   }
 
   onPageRendered(renderedTemplates) {
-    renderedTemplates[0][9] = [" Simbrief ID[blue]"];
-    renderedTemplates[0][10] = [this.simbriefField];
+    renderedTemplates[0][9] = [" SIMBRIEF ID[blue]", "WINWING CDU[blue]"];
+    renderedTemplates[0][10] = [this.simbriefField, this.cduSwitch];
 
-    renderedTemplates[0][11] = [" Hoppie code[blue]"];
+    renderedTemplates[0][11] = [" HOPPIE CODE[blue]"];
     renderedTemplates[0][12] = [this.hoppieField];
   }
 }

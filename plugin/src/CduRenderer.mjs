@@ -26,6 +26,7 @@ class CduRenderer {
   constructor(renderer, binder) {
     this.renderer = renderer;
     this.binder = binder;
+    this.active = GetStoredData("cj4_plus_winwing_setting") === "true";
 
     this.rowData = Array.from({ length: MF_CDU_ROWS * MF_CDU_COLS }, () => []);
     this.socketUri = !!this.binder.isPrimaryInstrument
@@ -36,6 +37,22 @@ class CduRenderer {
       .on("simTime")
       .atFrequency(4)
       .handle(() => this.update());
+    this.binder.bus
+      .getSubscriber()
+      .on("cj4_plus_winwing_setting")
+      .handle((v) => {
+        this.active = v;
+        if (!this.active) {
+          if (this.socket) {
+            try {
+              this.socket.close();
+            } catch (err) {}
+            this.socket = null;
+          }
+        } else {
+          this.connect();
+        }
+      });
 
     const oldRenderToDom = renderer.renderToDom.bind(renderer);
     renderer.renderToDom = (...args) => {
@@ -57,15 +74,19 @@ class CduRenderer {
       ["yellow", MfColour.Yellow],
       ["white", MfColour.White],
     ]);
+    if(this.active)
     this.connect();
   }
   connect() {
     this.socket = new WebSocket(this.socketUri);
     this.socket.onerror = () => {
-
-      setTimeout(() => {
-        this.connect();
-      }, 5000);
+      try {
+        this.socket.close();
+      } catch (err) {}
+      if (this.active)
+        setTimeout(() => {
+          this.connect();
+        }, 5000);
     };
     this.socket.onopen = () => {
       this.needsUpdate = true;
@@ -97,12 +118,13 @@ class CduRenderer {
       }
     }
 
-    if(this.socket && this.socket.readyState === 1){
-       this.socket.send(JSON.stringify({Target: "Display", Data: this.rowData}));
+    if (this.socket && this.socket.readyState === 1) {
+      this.socket.send(
+        JSON.stringify({ Target: "Display", Data: this.rowData }),
+      );
     }
   }
   copyWtColDataToOutput(rowIndex, colIndex) {
- 
     const outputIndex = rowIndex * MF_CDU_COLS + colIndex;
     // More privates
     const cellData = this.renderer.columnData[rowIndex][colIndex];

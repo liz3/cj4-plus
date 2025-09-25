@@ -48,8 +48,8 @@ export class DatalinkSendMessagesPage extends WT21FmcPage {
             },
           ),
         };
-        if (current[current.length - 1].length < 5) {
-          current[current.length - 1].unshift(entry);
+        if (current[0].length < 5) {
+          current[0].unshift(entry);
         } else {
           current.unshift([entry]);
         }
@@ -72,8 +72,8 @@ export class DatalinkSendMessagesPage extends WT21FmcPage {
             },
           ),
         };
-        if (current[current.length - 1].length < 5) {
-          current[current.length - 1].unshift(entry);
+        if (current[0].length < 5) {
+          current[0].unshift(entry);
         } else {
           current.unshift([entry]);
         }
@@ -138,8 +138,8 @@ export class DatalinkReceivedMessagesPage extends WT21FmcPage {
             },
           ),
         };
-        if (current[current.length - 1].length < 5) {
-          current[current.length - 1].unshift(entry);
+        if (current[0].length < 5) {
+          current[0].unshift(entry);
         } else {
           current.unshift([entry]);
         }
@@ -176,8 +176,8 @@ export class DatalinkReceivedMessagesPage extends WT21FmcPage {
             },
           ),
         };
-        if (current[current.length - 1].length < 5) {
-          current[current.length - 1].unshift(entry);
+        if (current[0].length < 5) {
+          current[0].unshift(entry);
         } else {
           current.unshift([entry]);
         }
