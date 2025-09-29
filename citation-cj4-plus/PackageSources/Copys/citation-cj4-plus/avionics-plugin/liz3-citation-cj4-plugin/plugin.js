@@ -621,10 +621,14 @@
               state._callback(message);
             }
             poll(state);
+          }).catch((err) => {
+            poll(state);
           });
         } else {
           poll(state);
         }
+      }).catch((err) => {
+        poll(state);
       });
     }, 1e4);
   };
@@ -1852,6 +1856,12 @@ ${content}`,
         onSelected: async (scratchpadContents) => {
           this.facility.set(scratchpadContents);
           return true;
+        },
+        onDelete: async () => {
+          if (!this.activeStation.get()) {
+            this.facility.set("");
+            this.send.set("NOTIFY");
+          }
         }
       }).bind(this.facility);
       this.sendButton = new import_msfs_sdk4.default.DisplayField(this, {

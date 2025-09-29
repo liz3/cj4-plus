@@ -1128,6 +1128,12 @@ export class DatalinkStatusPage extends WT21FmcPage {
 
         return true;
       },
+      onDelete: async() => {
+        if(!this.activeStation.get()){
+          this.facility.set("");
+          this.send.set("NOTIFY");
+        }
+      }
     }).bind(this.facility);
     this.sendButton = new msfsSdk.DisplayField(this, {
       formatter: {
