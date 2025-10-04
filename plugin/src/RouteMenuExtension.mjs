@@ -72,9 +72,13 @@ class RouteMenuExtension extends AbstractFmcPageExtension {
           actions.push(() => fms.setDestination(facility));
         }
       }
-      results = await fms.facLoader.searchByIdent(
+      let alternate = json.alternate;
+      if(Array.isArray(alternate))
+        alternate = alternate[0];
+      if(alternate && alternate.icao_code){
+          results = await fms.facLoader.searchByIdent(
         msfsSdk.FacilitySearchType.Airport,
-        json.alternate.icao_code,
+        alternate.icao_code,
         1,
       );
       if (results && results.length === 1) {
@@ -85,6 +89,7 @@ class RouteMenuExtension extends AbstractFmcPageExtension {
         if (facility) {
           actions.push(() => fms.setFlightPlanAlternate(facility));
         }
+      }
       }
       const idx = fms.ensureOnlyOneSegmentOfType(
         0,

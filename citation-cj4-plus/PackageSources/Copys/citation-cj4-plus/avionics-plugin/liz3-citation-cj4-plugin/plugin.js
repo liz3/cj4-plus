@@ -331,18 +331,23 @@
             actions.push(() => fms.setDestination(facility));
           }
         }
-        results = await fms.facLoader.searchByIdent(
-          import_msfs_sdk2.default.FacilitySearchType.Airport,
-          json.alternate.icao_code,
-          1
-        );
-        if (results && results.length === 1) {
-          const facility = await fms.facLoader.getFacility(
-            import_msfs_sdk2.default.FacilityType.Airport,
-            results[0]
+        let alternate = json.alternate;
+        if (Array.isArray(alternate))
+          alternate = alternate[0];
+        if (alternate && alternate.icao_code) {
+          results = await fms.facLoader.searchByIdent(
+            import_msfs_sdk2.default.FacilitySearchType.Airport,
+            alternate.icao_code,
+            1
           );
-          if (facility) {
-            actions.push(() => fms.setFlightPlanAlternate(facility));
+          if (results && results.length === 1) {
+            const facility = await fms.facLoader.getFacility(
+              import_msfs_sdk2.default.FacilityType.Airport,
+              results[0]
+            );
+            if (facility) {
+              actions.push(() => fms.setFlightPlanAlternate(facility));
+            }
           }
         }
         const idx = fms.ensureOnlyOneSegmentOfType(
