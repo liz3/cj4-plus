@@ -302,7 +302,7 @@
         const fms = page.fms;
         const actions = [];
         actions.push(() => fms.emptyModFlightPlan(true));
-        import_msfs_wt21_shared.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").set(json.general.flight_number);
+        import_msfs_wt21_shared.default.FmcUserSettings.getManager(this.bus).getSetting("flightNumber").set((typeof json.general.icao_airline === "string" ? json.general.icao_airline : "") + json.general.flight_number);
         let results = await fms.facLoader.searchByIdent(
           import_msfs_sdk2.default.FacilitySearchType.Airport,
           json.origin.icao_code,

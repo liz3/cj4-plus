@@ -40,7 +40,7 @@ class RouteMenuExtension extends AbstractFmcPageExtension {
       actions.push(() => fms.emptyModFlightPlan(true));
       wt21Shared.FmcUserSettings.getManager(this.bus)
         .getSetting("flightNumber")
-        .set(json.general.flight_number);
+        .set((typeof json.general.icao_airline === "string" ? json.general.icao_airline : "") + json.general.flight_number);
       // origin
       let results = await fms.facLoader.searchByIdent(
         msfsSdk.FacilitySearchType.Airport,
