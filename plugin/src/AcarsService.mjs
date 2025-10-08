@@ -105,17 +105,58 @@ const acarsService = (bus) => {
       );
       return true;
     });
+
+  bus
+    .getSubscriber()
+    .on("cj4_plus_network_setting")
+    .handle((v) => {
+      const callSign = wt21Shared.FmcUserSettings.getManager(bus)
+        .getSetting("flightNumber")
+        .get();
+      if (callSign) {
+        if (acars.client) {
+          acars.client.dispose();
+        }
+        acars.client = createClient(
+          GetStoredData("cj4_plus_hoppie_code"),
+          callSign,
+          "C25C",
+          (message) => {
+            acars.messages.push(message);
+            if (message.type === "send") {
+              publisher
+                .getPublisher()
+                .pub("acars_outgoing_message", message, true, false);
+            } else {
+              publisher.pub("acars_incoming_message", message, true, false);
+              SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
+            }
+          },
+          v.toLowerCase(),
+        );
+        acars.client._stationCallback = (opt) => {
+          publisher
+            .getPublisher()
+            .pub("acars_station_status", opt, true, false);
+        };
+      }
+      return true;
+    });
+
   wt21Shared.FmcUserSettings.getManager(bus)
     .getSetting("flightNumber")
     .sub((value) => {
       if (!value || !value.length) {
-        const current = this.acarsClient.get();
+        const current = this.client;
         if (current) {
           current.dispose();
         }
         acars.client = null;
         publisher.pub("acars_new_client", null, true, false);
         return;
+      }
+      if (acars.client) {
+        acars.client.dispose();
       }
       acars.client = createClient(
         GetStoredData("cj4_plus_hoppie_code"),
@@ -132,6 +173,9 @@ const acarsService = (bus) => {
             SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
           }
         },
+        GetStoredData("cj4_plus_network_setting")
+          ? GetStoredData("cj4_plus_network_setting").toLowerCase()
+          : "hoppie",
       );
       acars.client._stationCallback = (opt) => {
         publisher.getPublisher().pub("acars_station_status", opt, true, false);

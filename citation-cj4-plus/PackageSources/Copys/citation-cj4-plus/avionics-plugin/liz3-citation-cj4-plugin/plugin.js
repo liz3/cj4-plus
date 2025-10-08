@@ -196,14 +196,30 @@
       super(page);
       this.simbriefId = import_msfs_sdk.Subject.create(GetStoredData("cj4_plus_simbrief_id"));
       this.hoppieId = import_msfs_sdk.Subject.create(GetStoredData("cj4_plus_hoppie_code"));
-      this.cduSetting = import_msfs_sdk.Subject.create(GetStoredData("cj4_plus_winwing_setting") === "true" ? 1 : 0);
+      this.cduSetting = import_msfs_sdk.Subject.create(
+        GetStoredData("cj4_plus_winwing_setting") === "true" ? 1 : 0
+      );
+      this.networkOptions = ["HOPPIE", "SAYINTENTIONS"];
+      this.networkOption = import_msfs_sdk.Subject.create(
+        GetStoredData("cj4_plus_network_setting") ? this.networkOptions.indexOf(
+          GetStoredData("cj4_plus_network_setting").toUpperCase()
+        ) : 0
+      );
       this.cduSwitch = new import_msfs_sdk.default.SwitchLabel(page, {
         optionStrings: ["OFF", "ON"],
         activeStyle: "green"
       }).bind(this.cduSetting);
+      this.networkSwitch = new import_msfs_sdk.default.SwitchLabel(page, {
+        optionStrings: this.networkOptions,
+        activeStyle: "green"
+      }).bind(this.networkOption);
+      this.networkOption.sub((v) => {
+        SetStoredData("cj4_plus_network_setting", this.networkOptions[v]);
+        page.bus.getPublisher().pub("cj4_plus_network_setting", this.networkOptions[v], true, false);
+      });
       this.cduSetting.sub((v) => {
         SetStoredData("cj4_plus_winwing_setting", v === 1 ? "true" : "false");
-        page.bus.getPublisher().pub("cj4_plus_winwing_setting", v === 1);
+        page.bus.getPublisher().pub("cj4_plus_winwing_setting", v === 1, true, false);
       });
       this.simbriefField = new import_msfs_sdk.default.TextInputField(page, {
         formatter: new import_msfs_wt21_fmc.StringInputFormat({ nullValueString: "-----" }),
@@ -211,7 +227,7 @@
           if (scratchpadContents.length) {
             SetStoredData("cj4_plus_simbrief_id", scratchpadContents.toString());
             this.simbriefId.set(scratchpadContents);
-            page.bus.getPublisher().pub("simbrief_id", scratchpadContents);
+            page.bus.getPublisher().pub("simbrief_id", scratchpadContents, true, false);
           }
           return Promise.resolve(null);
         },
@@ -224,7 +240,10 @@
         prefix: ""
       }).bind(this.simbriefId);
       this.hoppieField = new import_msfs_sdk.default.TextInputField(page, {
-        formatter: new import_msfs_wt21_fmc.StringInputFormat({ nullValueString: "-----", maxLength: 20 }),
+        formatter: new import_msfs_wt21_fmc.StringInputFormat({
+          nullValueString: "-----",
+          maxLength: 20
+        }),
         onSelected: (scratchpadContents) => {
           return new Promise((resolve) => {
             const id = `${Date.now()}--hoppie-input`;
@@ -243,8 +262,7 @@
               resolve("");
             });
             input.addEventListener("blur", (event) => {
-              if (s)
-                return;
+              if (s) return;
               this.hoppieId.set("");
               event.target.blur();
               event.target.remove();
@@ -267,6 +285,8 @@
       }).bind(this.hoppieId);
     }
     onPageRendered(renderedTemplates) {
+      renderedTemplates[0][7] = [" NETWORK[blue]"];
+      renderedTemplates[0][8] = [this.networkSwitch];
       renderedTemplates[0][9] = [" SIMBRIEF ID[blue]", "WINWING CDU[blue]"];
       renderedTemplates[0][10] = [this.simbriefField, this.cduSwitch];
       renderedTemplates[0][11] = [" HOPPIE CODE[blue]"];
@@ -539,12 +559,9 @@
       ["to", receiver],
       ["packet", payload]
     ]);
-    return fetch(
-      `https://www.hoppie.nl/acars/system/connect.html?${params.toString()}`,
-      {
-        method: "GET"
-      }
-    );
+    return fetch(`${state._service_url}?${params.toString()}`, {
+      method: "GET"
+    });
   };
   var responseOptions = (c) => {
     const map = {
@@ -654,7 +671,11 @@
     minutes = minutes.toString().padStart(2, "0");
     return `${hours}:${minutes}`;
   };
-  var createClient = (code, callsign, aicraftType, messageCallback) => {
+  var SERVICES = {
+    hoppie: "https://www.hoppie.nl/acars/system/connect.html",
+    sayintentions: " https://acars.sayintentions.ai/acars/system/connect.html"
+  };
+  var createClient = (code, callsign, aicraftType, messageCallback, service = "hoppie") => {
     const state = {
       code,
       callsign,
@@ -664,7 +685,8 @@
       _min_count: 0,
       aircraft: aicraftType,
       idc: 0,
-      message_stack: {}
+      message_stack: {},
+      _service_url: SERVICES[service]
     };
     state.dispose = () => {
       if (state._interval) clearInterval(state._interval);
@@ -904,15 +926,45 @@ ${content}`,
       );
       return true;
     });
+    bus.getSubscriber().on("cj4_plus_network_setting").handle((v) => {
+      const callSign = import_msfs_wt21_shared2.default.FmcUserSettings.getManager(bus).getSetting("flightNumber").get();
+      if (callSign) {
+        if (acars.client) {
+          acars.client.dispose();
+        }
+        acars.client = createClient(
+          GetStoredData("cj4_plus_hoppie_code"),
+          callSign,
+          "C25C",
+          (message) => {
+            acars.messages.push(message);
+            if (message.type === "send") {
+              publisher.getPublisher().pub("acars_outgoing_message", message, true, false);
+            } else {
+              publisher.pub("acars_incoming_message", message, true, false);
+              SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
+            }
+          },
+          v.toLowerCase()
+        );
+        acars.client._stationCallback = (opt) => {
+          publisher.getPublisher().pub("acars_station_status", opt, true, false);
+        };
+      }
+      return true;
+    });
     import_msfs_wt21_shared2.default.FmcUserSettings.getManager(bus).getSetting("flightNumber").sub((value) => {
       if (!value || !value.length) {
-        const current = (void 0).acarsClient.get();
+        const current = (void 0).client;
         if (current) {
           current.dispose();
         }
         acars.client = null;
         publisher.pub("acars_new_client", null, true, false);
         return;
+      }
+      if (acars.client) {
+        acars.client.dispose();
       }
       acars.client = createClient(
         GetStoredData("cj4_plus_hoppie_code"),
@@ -926,7 +978,8 @@ ${content}`,
             publisher.pub("acars_incoming_message", message, true, false);
             SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
           }
-        }
+        },
+        GetStoredData("cj4_plus_network_setting") ? GetStoredData("cj4_plus_network_setting").toLowerCase() : "hoppie"
       );
       acars.client._stationCallback = (opt) => {
         publisher.getPublisher().pub("acars_station_status", opt, true, false);
@@ -2476,9 +2529,9 @@ ${content}`,
         fms.performancePlanProxy.cruiseAltitude.set(
           Number.parseInt(json.general.initial_altitude)
         );
-        fms.performancePlanProxy.cargoWeight.set(cargo * 2.2);
+        fms.performancePlanProxy.cargoWeight.set(unit === "kgs" ? cargo * 2.2 : cargo);
         fms.performancePlanProxy.paxNumber.set(pax);
-        fms.performancePlanProxy.averagePassengerWeight.set(paxWeight * 2.2);
+        fms.performancePlanProxy.averagePassengerWeight.set(unit === "kgs" ? paxWeight * 2.2 : cargo);
         return "";
       } catch (err) {
         throw "UPKLNK LOAD FAILED";

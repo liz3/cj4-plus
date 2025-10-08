@@ -94,9 +94,9 @@ class PerfInitPageExtension extends AbstractFmcPageExtension {
       fms.performancePlanProxy.cruiseAltitude.set(
         Number.parseInt(json.general.initial_altitude),
       );
-      fms.performancePlanProxy.cargoWeight.set(cargo * 2.2);
+      fms.performancePlanProxy.cargoWeight.set(unit === "kgs" ? cargo * 2.2 : cargo);
       fms.performancePlanProxy.paxNumber.set(pax);
-      fms.performancePlanProxy.averagePassengerWeight.set(paxWeight * 2.2);
+      fms.performancePlanProxy.averagePassengerWeight.set(unit === "kgs" ? paxWeight * 2.2 : cargo);
       return "";
     } catch (err) {
       throw "UPKLNK LOAD FAILED";
