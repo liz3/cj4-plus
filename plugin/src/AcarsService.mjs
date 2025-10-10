@@ -125,8 +125,7 @@ const acarsService = (bus) => {
             acars.messages.push(message);
             if (message.type === "send") {
               publisher
-                .getPublisher()
-                .pub("acars_outgoing_message", message, true, false);
+               .pub("acars_outgoing_message", message, true, false);
             } else {
               publisher.pub("acars_incoming_message", message, true, false);
               SimVar.SetSimVarValue("L:WT_CMU_DATALINK_RCVD", "number", 1);
@@ -136,7 +135,6 @@ const acarsService = (bus) => {
         );
         acars.client._stationCallback = (opt) => {
           publisher
-            .getPublisher()
             .pub("acars_station_status", opt, true, false);
         };
       }
@@ -166,7 +164,6 @@ const acarsService = (bus) => {
           acars.messages.push(message);
           if (message.type === "send") {
             publisher
-              .getPublisher()
               .pub("acars_outgoing_message", message, true, false);
           } else {
             publisher.pub("acars_incoming_message", message, true, false);
@@ -178,7 +175,7 @@ const acarsService = (bus) => {
           : "hoppie",
       );
       acars.client._stationCallback = (opt) => {
-        publisher.getPublisher().pub("acars_station_status", opt, true, false);
+        publisher.pub("acars_station_status", opt, true, false);
       };
     });
 };
