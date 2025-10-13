@@ -28,6 +28,7 @@ import {
   DatalinkSpeedPage,
   DatalinkStatusPage,
   DatalinkTelexPage,
+  DatalinkPosReportPage
 } from "./DatalinkPages.mjs";
 import { createClient } from "./Hoppie.mjs";
 import PerfInitPageExtension from "./PerfPageExtension.mjs";
@@ -86,6 +87,13 @@ class Plugin extends WT21FmcAvionicsPlugin {
     context.addPluginPageRoute(
       "/datalink-extra/atis",
       DatalinkAtisPage,
+      undefined,
+      {},
+    );
+
+        context.addPluginPageRoute(
+      "/datalink-extra/posrep",
+      DatalinkPosReportPage,
       undefined,
       {},
     );

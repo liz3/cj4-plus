@@ -75,7 +75,11 @@ class DatalinkPageExtension extends AbstractFmcPageExtension {
         ),
       ],
       [],
-      [],
+      [PageLinkField.createLink(
+          this.page,
+          "<POS REPORT",
+          "/datalink-extra/posrep",
+        ),],
       [],
       [],
       [],

@@ -16,7 +16,11 @@ import msfsSdk, {
   Subject,
 } from "@microsoft/msfs-sdk";
 import { convertUnixToHHMM } from "./Hoppie.mjs";
-import { fetchAcarsMessages, fetchAcarsStatus } from "./AcarsService.mjs";
+import {
+  fetchAcarsMessages,
+  fetchAcarsStatus,
+  deleteMessage,
+} from "./AcarsService.mjs";
 
 export class DatalinkSendMessagesPage extends WT21FmcPage {
   constructor(
@@ -31,6 +35,17 @@ export class DatalinkSendMessagesPage extends WT21FmcPage {
     super(bus, screen, props, fms, baseInstrument, renderCallback);
     this.messages = Subject.create([[]]);
     this.clockField = FmcCmuCommons.createClockField(this, this.bus);
+    this.bus
+      .getSubscriber()
+      .on("acars_message_removal")
+      .handle((idv) => {
+        const current = this.messages.get();
+        for (let i = 0; i < current.length; i += 1) {
+          current[i] = current[i].filter((e) => e.message._id !== idv);
+        }
+        this.messages.set(current);
+        this.invalidate();
+      });
     this.bus
       .getSubscriber()
       .on("acars_outgoing_message")
@@ -121,6 +136,17 @@ export class DatalinkReceivedMessagesPage extends WT21FmcPage {
     super(bus, screen, props, fms, baseInstrument, renderCallback);
     this.messages = Subject.create([[]]);
     this.clockField = FmcCmuCommons.createClockField(this, this.bus);
+    this.bus
+      .getSubscriber()
+      .on("acars_message_removal")
+      .handle((idv) => {
+        const current = this.messages.get();
+        for (let i = 0; i < current.length; i += 1) {
+          current[i] = current[i].filter((e) => e.message._id !== idv);
+        }
+        this.messages.set(current);
+        this.invalidate();
+      });
     this.bus
       .getSubscriber()
       .on("acars_incoming_message")
@@ -226,7 +252,24 @@ export class DatalinkMessagePage extends WT21FmcPage {
     super(bus, screen, props, fms, baseInstrument, renderCallback);
     this.clockField = FmcCmuCommons.createClockField(this, this.bus);
     this.options = [];
-
+    this.deleteField = new DisplayField(this, {
+      formatter: {
+        nullValueString: "DEL>[blue]",
+        format: (value) => {
+          return "DEL>[blue]";
+        },
+      },
+      onSelected: async () => {
+        const message = this.params.get("message");
+        if (message) {
+          this.screen.navigateTo(
+            `/datalink-extra/${message.type === "send" ? "send-msgs" : "recv-msgs"}`,
+          );
+          deleteMessage(this.bus, message._id);
+        }
+        return true;
+      },
+    });
     this.updateHandler = bus
       .getSubscriber()
       .on("acars_message_state_update")
@@ -353,7 +396,7 @@ export class DatalinkMessagePage extends WT21FmcPage {
               "<RETURN",
               `/datalink-extra/${message.type === "send" ? "send-msgs" : "recv-msgs"}`,
             ),
-            message.options ? this.options[2] : "",
+            message.options ? this.options[2] : this.deleteField,
             this.clockField,
           ],
         ];
@@ -1128,12 +1171,12 @@ export class DatalinkStatusPage extends WT21FmcPage {
 
         return true;
       },
-      onDelete: async() => {
-        if(!this.activeStation.get()){
+      onDelete: async () => {
+        if (!this.activeStation.get()) {
           this.facility.set("");
           this.send.set("NOTIFY");
         }
-      }
+      },
     }).bind(this.facility);
     this.sendButton = new msfsSdk.DisplayField(this, {
       formatter: {
@@ -1691,7 +1734,7 @@ export class DatalinkLevelPage extends WT21FmcPage {
     this.send.set(
       !array.find((e) => {
         const v = e.get();
-        return v=== null || typeof v === "string" ? v.length === 0 : false;
+        return v === null || typeof v === "string" ? v.length === 0 : false;
       }),
     );
   }
@@ -1731,6 +1774,348 @@ export class DatalinkLevelPage extends WT21FmcPage {
         [],
         [
           PageLinkField.createLink(this, "<RETURN", "/datalink-menu"),
+          "",
+          this.clockField,
+        ],
+      ],
+    ];
+  }
+}
+
+export class DatalinkPosReportPage extends WT21FmcPage {
+  constructor() {
+    super(...arguments);
+    try {
+      this.clockField = FmcCmuCommons.createClockField(this, this.bus);
+      this.distance = Subject.create(0);
+      this.groundSpeed = Subject.create(0);
+
+      this.speed = Subject.create(
+        `${SimVar.GetSimVarValue("AIRSPEED MACH", "mach").toFixed(1)}`,
+      );
+      this.speedField = new msfsSdk.TextInputField(this, {
+        formatter: {
+          nullValueString: ".--",
+          maxLength: 3,
+          format(value) {
+            return `M.${value}[blue]`;
+          },
+          async parse(input) {
+            return input;
+          },
+        },
+        onModified: async (scratchpadContents) => {
+          if (scratchpadContents.startsWith("M"))
+            scratchpadContents = scratchpadContents.substr(1);
+          if (Number.isNaN(Number.parseInt(scratchpadContents))) return false;
+          this.speed.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this.speed);
+      // const fp = this.fms.getPrimaryFlightPlan();
+      // const activeLeg = fp ? fp.getLeg(fp.activeLateralLeg) : null;
+      this.waypoint = Subject.create("");
+      this.waypointField = new msfsSdk.TextInputField(this, {
+        formatter: {
+          nullValueString: "-----",
+          maxLength: 5,
+          format(value) {
+            return value ? `${value}[blue]` : this.nullValueString;
+          },
+          async parse(input) {
+            return input;
+          },
+        },
+        onModified: async (scratchpadContents) => {
+          this.waypoint.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this.waypoint);
+      // const activeLeg2 = fp ? fp.getLeg(fp.activeLateralLeg + 1) : null;
+      this.fWaypoint = Subject.create("");
+      this.fWaypointField = new msfsSdk.TextInputField(this, {
+        formatter: {
+          nullValueString: "-----",
+          maxLength: 5,
+          format(value) {
+            return value ? `${value}[blue]` : this.nullValueString;
+          },
+          async parse(input) {
+            return input;
+          },
+        },
+        onModified: async (scratchpadContents) => {
+          this.fWaypoint.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this.fWaypoint);
+
+      // const activeLeg3 = fp ? fp.getLeg(fp.activeLateralLeg + 2) : null;
+      this.nWaypoint = Subject.create("");
+      this.nWaypointField = new msfsSdk.TextInputField(this, {
+        formatter: {
+          nullValueString: "-----",
+          maxLength: 5,
+          format(value) {
+            return value ? `${value}[blue]` : this.nullValueString;
+          },
+          async parse(input) {
+            return input;
+          },
+        },
+        onModified: async (scratchpadContents) => {
+          this.nWaypoint.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this.nWaypoint);
+
+      this.ata = Subject.create(null);
+      this.ataField = new msfsSdk.TextInputField(this, {
+        formatter: {
+          nullValueString: "--:--",
+          maxLength: 5,
+          format(value) {
+            return value
+              ? `${value.substr(0, 2)}:${value.substr(2)}[blue]`
+              : this.nullValueString;
+          },
+          async parse(input) {
+            return input.replace("Z", "");
+          },
+        },
+        onModified: async (scratchpadContents) => {
+          if (Number.isNaN(Number.parseInt(scratchpadContents))) return false;
+          this.ata.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this.ata);
+
+      this.eta = Subject.create(null);
+      this.etaField = new msfsSdk.TextInputField(this, {
+        formatter: {
+          nullValueString: "--:--",
+          maxLength: 5,
+          format(value) {
+            return value
+              ? `${value.substr(0, 2)}:${value.substr(2)}[blue]`
+              : this.nullValueString;
+          },
+          async parse(input) {
+            return input.replace("Z", "");
+          },
+        },
+        onModified: async (scratchpadContents) => {
+          if (Number.isNaN(Number.parseInt(scratchpadContents))) return false;
+          this.eta.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this.eta);
+
+      this.send = Subject.create(false);
+
+      this.station = Subject.create(null);
+      this.bus
+        .getSubscriber()
+        .on("acars_station_status")
+        .handle((message) => {
+          this.station.set(message.active);
+          this.checkReady();
+          this.invalidate();
+        });
+
+      this.stationField = new msfsSdk.DisplayField(this, {
+        formatter: {
+          nullValueString: "----",
+          /** @inheritDoc */
+          format(value) {
+            return `${value}[blue]`;
+          },
+        },
+      }).bind(this.station);
+
+      fetchAcarsStatus(this.bus)
+        .then((res) => {
+          this.station.set(res.active);
+          this.invalidate();
+        })
+        .catch((err) => null);
+      this.value = Subject.create(null);
+      this.levelField = new msfsSdk.TextInputField(this, {
+        formatter: {
+          nullValueString: "---",
+          maxLength: 3,
+          format(value) {
+            return `FL${value}[blue]`;
+          },
+          async parse(input) {
+            return input;
+          },
+        },
+        onModified: async (scratchpadContents) => {
+          if (scratchpadContents.startsWith("FL"))
+            scratchpadContents = scratchpadContents.substr(2);
+          if (Number.isNaN(Number.parseInt(scratchpadContents))) return false;
+          this.value.set(scratchpadContents);
+          this.checkReady();
+          return true;
+        },
+      }).bind(this.value);
+
+      this.sendButton = new msfsSdk.DisplayField(this, {
+        formatter: {
+          nullValueString: "SEND",
+          /** @inheritDoc */
+          format(value) {
+            return `SEND[${value ? "blue" : "white"}]`;
+          },
+        },
+        onSelected: async () => {
+          if (this.send.get()) {
+            this.bus.getPublisher().pub(
+              "acars_message_send",
+              {
+                key: "sendPositionReport",
+                arguments: [
+                  this.value.get(),
+                  this.speed.get(),
+                  this.waypoint.get(),
+                  this.ata.get(),
+                  this.fWaypoint.get(),
+                  this.eta.get(),
+                  this.nWaypoint.get(),
+                ],
+              },
+              true,
+              false,
+            );
+
+            this.checkReady();
+          }
+          return true;
+        },
+      }).bind(this.send);
+      this.distanceSub = this.bus
+        .getSubscriber()
+        .on("lnavdata_waypoint_distance")
+        .handle((v) => {
+          this.distance.set(v);
+          this.updatePosData();
+        });
+      this.speedSub = this.bus
+        .getSubscriber()
+        .on("ground_speed")
+        .handle((v) => {
+          this.groundSpeed.set(v);
+          this.updatePosData();
+        });
+    } catch (err) {
+      console.log(err);
+    }
+  }
+  checkReady() {
+    const array = [
+      this.waypoint,
+      this.fWaypoint,
+      this.nWaypoint,
+      this.ata,
+      this.eta,
+      this.speed,
+      this.value,
+      this.station,
+    ];
+    this.send.set(
+      !array.find((e) => {
+        if (!e) return true;
+        const v = e.get();
+
+        return v === null || (typeof v === "string" ? v.length === 0 : false);
+      }),
+    );
+  }
+  onDestroy() {
+    this.speedSub.destroy();
+    this.distanceSub.destroy();
+  }
+  onPause() {
+    this.speedSub.pause();
+    this.distanceSub.pause();
+  }
+  onResume() {
+    this.speedSub.resume();
+    this.distanceSub.resume();
+  }
+  updatePosData() {
+    const gs = this.groundSpeed.get();
+    const distance = this.distance.get();
+    const fp = this.fms.getPrimaryFlightPlan();
+    if (!gs || !distance || !fp) return;
+
+    {
+      const activeLeg = fp.getLeg(fp.activeLateralLeg);
+      if (activeLeg) this.waypoint.set(activeLeg.name);
+    }
+    {
+      const activeLeg = fp.getLeg(fp.activeLateralLeg + 1);
+      if (activeLeg) this.fWaypoint.set(activeLeg.name);
+    }
+    {
+      const activeLeg = fp.getLeg(fp.activeLateralLeg + 2);
+      if (activeLeg) this.nWaypoint.set(activeLeg.name);
+    }
+
+    {
+      const time = new Date();
+      const rem = 60 * (distance / gs);
+      time.setUTCHours(time.getUTCHours() + Math.floor(rem / 60));
+      time.setUTCMinutes(time.getUTCMinutes() + Math.floor(rem % 60));
+      this.ata.set(
+        `${time.getUTCHours().toString().padStart(2, "0")}${time.getUTCMinutes().toString().padStart(2, "0")}`,
+      );
+    }
+    {
+      const leg = fp.getLeg(fp.activeLateralLeg + 1);
+      if (leg) {
+        const time = new Date();
+        const rem =
+          60 *
+          ((this.distance.get() + leg.calculated.distance / 1852) /
+            this.groundSpeed.get());
+        time.setUTCHours(time.getUTCHours() + Math.floor(rem / 60));
+        time.setUTCMinutes(time.getUTCMinutes() + Math.floor(rem % 60));
+        this.eta.set(
+          `${time.getUTCHours().toString().padStart(2, "0")}${time.getUTCMinutes().toString().padStart(2, "0")}`,
+        );
+      }
+    }
+    {
+      const v = SimVar.GetSimVarValue("INDICATED ALTITUDE", "feet");
+      this.value.set((v / 100).toFixed(0));
+    }
+    this.checkReady();
+  }
+  render() {
+    return [
+      [
+        ["", this.PagingIndicator, "POS REPORT"],
+        ["MACH", "FL"],
+        [this.speedField, this.levelField],
+        ["INBOUND", "ATA"],
+        [this.waypointField, this.ataField],
+        ["NEXT", "ETA"],
+        [this.fWaypointField, this.etaField],
+        ["AFTER", ""],
+        [this.nWaypointField, ""],
+        [],
+        [this.stationField, this.sendButton],
+        [],
+        [
+          PageLinkField.createLink(this, "<ATC INDEX", "/datalink-menu"),
           "",
           this.clockField,
         ],

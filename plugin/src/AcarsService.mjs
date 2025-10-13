@@ -32,6 +32,12 @@ export const fetchAcarsStatus = (bus) => {
   });
 };
 
+export const deleteMessage = (bus, id) => {
+
+    bus.getPublisher().pub(`acars_del_msg`, id, true, false);
+};
+
+
 const acarsService = (bus) => {
   const publisher = bus.getPublisher();
   bus
@@ -73,6 +79,19 @@ const acarsService = (bus) => {
       publisher.pub(
         "acars_messages_send_response",
         { messages: acars.messages.filter((e) => e.type === "send") },
+        true,
+        false,
+      );
+      return true;
+    });
+        bus
+    .getSubscriber()
+    .on("acars_del_msg")
+    .handle((v) => {
+      acars.messages = acars.messages.filter(e => e._id !== v);
+      publisher.pub(
+        "acars_message_removal",
+        v,
         true,
         false,
       );
