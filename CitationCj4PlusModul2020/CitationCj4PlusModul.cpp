@@ -21,12 +21,12 @@ void CALLBACK MyDispatchProc(SIMCONNECT_RECV* pData, DWORD cbData,
 		SIMCONNECT_RECV_SIMOBJECT_DATA* pObjData =
 			(SIMCONNECT_RECV_SIMOBJECT_DATA*)pData;
 		if (pObjData->dwRequestID == REQUEST_FETCH_LVARS) {
-			int32_t* ptr = reinterpret_cast<int32_t*>(pObjData->dwData);
+			int32_t* ptr = reinterpret_cast<int32_t*>(&pObjData->dwData);
 			appState->vars["L:CJ4_PLUS_ACTIVE"] = ptr[0];
 			appState->vars["L:WT_CJ4_BATTERY_SWITCH_POS"] = ptr[1];
 		}
 		else if (pObjData->dwRequestID == REQUEST_FETCH_SIMVARS) {
-			double* ptr = reinterpret_cast<double*>(pObjData->dwData);
+			double* ptr = reinterpret_cast<double*>(&pObjData->dwData);
 			appState->vars["GENERAL ENG STARTER:1"] = ptr[0];
 			appState->vars["GENERAL ENG STARTER:2"] = ptr[1];
 			appState->vars["CIRCUIT ON:49"] = ptr[2];
@@ -67,10 +67,10 @@ extern "C" MSFS_CALLBACK void module_init(void)
 		SimConnect_Open(&state.hSimConneect, "Citation CJ4+", NULL, 0, 0, 0))) {
 
 		SimConnect_AddToDataDefinition(state.hSimConneect, DEFINITION_LVARS,
-			"CJ4_PLUS_ACTIVE", "number");
+			"L:CJ4_PLUS_ACTIVE", "number");
 
 		SimConnect_AddToDataDefinition(state.hSimConneect, DEFINITION_LVARS,
-			"WT_CJ4_BATTERY_SWITCH_POS", "number");
+			"L:WT_CJ4_BATTERY_SWITCH_POS", "number");
 
 		SimConnect_AddToDataDefinition(state.hSimConneect, DEFINITION_SIMVARS,
 			"GENERAL ENG STARTER:1", "bool", SIMCONNECT_DATATYPE_INT32);
