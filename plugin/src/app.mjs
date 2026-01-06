@@ -45,7 +45,7 @@ class Plugin extends WT21FmcAvionicsPlugin {
   registerFmcExtensions(context) {
     const name = SimVar.GetSimVarValue("TITLE", "string");
     if (!name.includes("CJ4")) return;
-    SimVar.SetSimVarValue("L:CJ4_PLUS_ACTIVE", "number", 1);
+    SimVar.SetSimVarValue("L:CJ4_PLUS_ACTIVE", "number", 5);
     this.renderer = context.renderer;
     this.cduRenderer = new CdiRenderer(this.renderer, this.binder);
 

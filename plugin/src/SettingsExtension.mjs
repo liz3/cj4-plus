@@ -17,7 +17,7 @@ class PlusSettingsExtension extends AbstractFmcPageExtension {
     this.cduSetting = Subject.create(
       GetStoredData("cj4_plus_winwing_setting") === "true" ? 1 : 0,
     );
-    this.networkOptions = ["HOPPIE", "SAYINTENTIONS"];
+    this.networkOptions = ["HOPPIE", "SAYI.AI", "BATC"];
     this.networkOption = Subject.create(
       GetStoredData("cj4_plus_network_setting")
         ? this.networkOptions.indexOf(

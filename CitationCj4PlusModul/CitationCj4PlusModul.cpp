@@ -7,30 +7,13 @@
 #include <MSFS\Utils\SimParamArrayHelper.h>
 #include <iostream>
 
-//std::string GetClipboardText()
-//{
-//    std::string text;
-//    if (!OpenClipboard(nullptr))
-//        return text;
-//
-//    HANDLE hData = GetClipboardData(CF_TEXT);
-//    if (hData) {
-//        char* pszText = static_cast<char*>(GlobalLock(hData));
-//        if (pszText) {
-//            text = pszText;
-//            GlobalUnlock(hData);
-//        }
-//    }
-//    CloseClipboard();
-//    return text;
-//}
-
 double getLVar(const char* name, const char* type) {
 	FsUnitId unitId = fsVarsGetUnitId(type);
-	FsNamedVarId namedId = fsVarsRegisterNamedVar(name);
+	FsLVarId  namedId = fsVarsRegisterLVar(name);
 	double result = 0;
-	fsVarsNamedVarGet(namedId, unitId, &result);
-	return result;
+	if(fsVarsLVarGet(namedId, unitId, &result) == FS_VAR_ERROR_NONE)
+		return result;
+	return 0;
 }
 double getAircraftVar(const char* name, const char* type, int index = 0) {
 	FsVarParamArray param = FsCreateParamArray("i", index);
@@ -38,7 +21,7 @@ double getAircraftVar(const char* name, const char* type, int index = 0) {
 	FsUnitId unitId = fsVarsGetUnitId(type);
 	FsSimVarId simvarId = fsVarsGetAircraftVarId(name);
 	double out;
-	bool r = fsVarsAircraftVarGet(simvarId, unitId, param, &out) ==
+	bool r = fsVarsAVarGet(simvarId, unitId, param, &out) ==
 		FS_VAR_ERROR_NONE;
 	return r ? out : 0;
 }
@@ -46,11 +29,18 @@ double getAircraftVar(const char* name, const char* type, int index = 0) {
 
 extern "C" MSFS_CALLBACK void module_init(void)
 {
-	
+	FsUnitId unitId = fsVarsGetUnitId("number");
+	FsLVarId lVarId = fsVarsRegisterLVar("CJ4_PLUS_ACTIVE");
+	double value = 0;
+	if (fsVarsLVarSet(lVarId, unitId, value) == FS_VAR_ERROR_NONE)
+	{
+		// valid
+	}
+
 }
 extern "C" MSFS_CALLBACK void Update_StandAlone(float dTime)
 {
-	if (getLVar("CJ4_PLUS_ACTIVE", "number") != 1)
+	if (getLVar("CJ4_PLUS_ACTIVE", "number") != 5)
 		return;
 	double leftIgnition = getAircraftVar("GENERAL ENG STARTER", "bool", 1);
 	double rightIgnition = getAircraftVar("GENERAL ENG STARTER", "bool", 2);
@@ -80,10 +70,7 @@ extern "C" MSFS_CALLBACK void Update_StandAlone(float dTime)
 		}
 
 	}
-	
 
-		
-	
 }
 
 extern "C" MSFS_CALLBACK void module_deinit(void)

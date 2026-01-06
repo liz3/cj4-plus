@@ -199,7 +199,7 @@
       this.cduSetting = import_msfs_sdk.Subject.create(
         GetStoredData("cj4_plus_winwing_setting") === "true" ? 1 : 0
       );
-      this.networkOptions = ["HOPPIE", "SAYINTENTIONS"];
+      this.networkOptions = ["HOPPIE", "SAYI.AI", "BATC"];
       this.networkOption = import_msfs_sdk.Subject.create(
         GetStoredData("cj4_plus_network_setting") ? this.networkOptions.indexOf(
           GetStoredData("cj4_plus_network_setting").toUpperCase()
@@ -557,12 +557,13 @@
   };
   var sendAcarsMessage = async (state, receiver, payload, messageType) => {
     const params = new URLSearchParams([
-      ["logon", state.code],
       ["from", state.callsign],
       ["type", messageType],
       ["to", receiver],
       ["packet", payload]
     ]);
+    if (state.code)
+      params.append("logon", state.code);
     return fetch(`${state._service_url}?${params.toString()}`, {
       method: "GET"
     });
@@ -604,12 +605,45 @@
     state._min_count++;
     return `/data2/${state._min_count}/${replyId}/N/${request}`;
   };
+  var getRandomPollInterval = () => {
+    return Math.floor(Math.random() * (75e3 - 45e3 + 1)) + 45e3;
+  };
+  var FAST_POLL_INTERVAL = 1e3 * 20;
+  var FAST_POLL_DURATION = 1e3 * 60 * 2;
+  var getPollInterval = (state) => {
+    if (state._expectingResponse && Date.now() < state._expectingResponse) {
+      return FAST_POLL_INTERVAL;
+    }
+    if (state._expectingResponse) {
+      state._expectingResponse = null;
+    }
+    return getRandomPollInterval();
+  };
+  var startPollingIfNeeded = (state) => {
+    if (!state._pollingStarted) {
+      state._pollingStarted = true;
+      poll(state);
+    }
+  };
+  var handleSuccessfulSend = (state, text) => {
+    if (text.startsWith("ok")) {
+      startPollingIfNeeded(state);
+      state._expectingResponse = Date.now() + FAST_POLL_DURATION;
+      return true;
+    }
+    return false;
+  };
   var poll = (state) => {
+    const interval = getPollInterval(state);
     state._interval = setTimeout(() => {
-      sendAcarsMessage(state, "SERVER", "Nothing", "POLL").then((response) => {
+      sendAcarsMessage(state, "SERVER", "Nothing", "poll").then((response) => {
         if (response.ok) {
           response.text().then((raw) => {
-            for (const message of parseMessages(raw)) {
+            const messages = parseMessages(raw);
+            if (messages.length > 0 && state._expectingResponse) {
+              state._expectingResponse = null;
+            }
+            for (const message of messages) {
               if (message.from === state.callsign && message.type === "inforeq") {
                 continue;
               }
@@ -656,15 +690,14 @@
       }).catch((err) => {
         poll(state);
       });
-    }, 1e4);
+    }, interval);
   };
   var addMessage = (state, content) => {
     state._callback({
       type: "send",
       content,
       from: state.callsign,
-      ts: Date.now(),
-      _id: state.idc++
+      ts: Date.now()
     });
     return content;
   };
@@ -678,7 +711,50 @@
   };
   var SERVICES = {
     hoppie: "https://www.hoppie.nl/acars/system/connect.html",
-    sayintentions: " https://acars.sayintentions.ai/acars/system/connect.html"
+    "sayi.ai": "https://acars.sayintentions.ai/acars/system/connect.html",
+    beyondatc: "http://localhost:57698/connect.html"
+  };
+  var beyondAtcAtisRequest = async (state, icao, type) => {
+    if (type === "TAF") {
+      state._callback({
+        type: "inforeq",
+        content: "TAF not supported",
+        from: "BEYONDATC",
+        ts: Date.now()
+      });
+      return false;
+    }
+    const baseUrl = state._service_url.replace("/connect.html", "");
+    const endpoint = type === "METAR" ? "metar" : "atis";
+    try {
+      const response = await fetch(`${baseUrl}/acars/${endpoint}/${icao}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        state._callback({
+          type: "inforeq",
+          content: `Error: ${errorText}`,
+          from: "BEYONDATC",
+          ts: Date.now()
+        });
+        return false;
+      }
+      const text = await response.text();
+      state._callback({
+        type: "inforeq",
+        content: text,
+        from: icao,
+        ts: Date.now()
+      });
+      return true;
+    } catch (err) {
+      state._callback({
+        type: "inforeq",
+        content: `Error: ${err.message}`,
+        from: "BEYONDATC",
+        ts: Date.now()
+      });
+      return false;
+    }
   };
   var createClient = (code, callsign, aicraftType, messageCallback, service = "hoppie") => {
     const state = {
@@ -691,7 +767,9 @@
       aircraft: aicraftType,
       idc: 0,
       message_stack: {},
-      _service_url: SERVICES[service]
+      _service_url: SERVICES[service],
+      _expectingResponse: null,
+      _pollingStarted: false
     };
     state.dispose = () => {
       if (state._interval) clearInterval(state._interval);
@@ -705,10 +783,12 @@
         "telex"
       );
       if (!response.ok) return false;
-      const text = await response.text();
-      return text.startsWith("ok");
+      return handleSuccessfulSend(state, await response.text());
     };
     state.atisRequest = async (icao, type) => {
+      if (service === "beyondatc") {
+        return beyondAtcAtisRequest(state, icao, type);
+      }
       const response = await sendAcarsMessage(
         state,
         state.callsign,
@@ -718,7 +798,6 @@
       if (!response.ok) return false;
       const text = await response.text();
       for (const message of parseMessages(text)) {
-        message._id = state.idc++;
         state._callback(message);
       }
       return text.startsWith("ok");
@@ -749,8 +828,7 @@ ${content}`,
       );
       if (!response.ok) return false;
       forwardStateUpdate(state);
-      const text = await response.text();
-      return text.startsWith("ok");
+      return handleSuccessfulSend(state, await response.text());
     };
     state.sendLogoffRequest = async () => {
       if (!state.active_station) return;
@@ -778,8 +856,7 @@ ${content}`,
         "telex"
       );
       if (!response.ok) return false;
-      const text = await response.text();
-      return text.startsWith("ok");
+      return handleSuccessfulSend(state, await response.text());
     };
     state.sendPdc = async (to, dep, arr, stand, atis, eob, freeText) => {
       const response = await sendAcarsMessage(
@@ -792,8 +869,7 @@ ${content}`,
         "telex"
       );
       if (!response.ok) return false;
-      const text = await response.text();
-      return text.startsWith("ok");
+      return handleSuccessfulSend(state, await response.text());
     };
     state.sendLevelChange = async (lvl, climb, reason, freeText) => {
       const response = await sendAcarsMessage(
@@ -809,8 +885,7 @@ ${content}`,
         "cpdlc"
       );
       if (!response.ok) return false;
-      const text = await response.text();
-      return text.startsWith("ok");
+      return handleSuccessfulSend(state, await response.text());
     };
     state.sendSpeedChange = async (unit, value, reason, freeText) => {
       const response = await sendAcarsMessage(
@@ -826,8 +901,7 @@ ${content}`,
         "cpdlc"
       );
       if (!response.ok) return false;
-      const text = await response.text();
-      return text.startsWith("ok");
+      return handleSuccessfulSend(state, await response.text());
     };
     state.sendDirectTo = async (waypoint, reason, freeText) => {
       const response = await sendAcarsMessage(
@@ -843,10 +917,9 @@ ${content}`,
         "cpdlc"
       );
       if (!response.ok) return false;
-      const text = await response.text();
-      return text.startsWith("ok");
+      return handleSuccessfulSend(state, await response.text());
     };
-    poll(state);
+    startPollingIfNeeded(state);
     return state;
   };
 
@@ -2917,7 +2990,7 @@ ${content}`,
     registerFmcExtensions(context) {
       const name = SimVar.GetSimVarValue("TITLE", "string");
       if (!name.includes("CJ4")) return;
-      SimVar.SetSimVarValue("L:CJ4_PLUS_ACTIVE", "number", 1);
+      SimVar.SetSimVarValue("L:CJ4_PLUS_ACTIVE", "number", 5);
       this.renderer = context.renderer;
       this.cduRenderer = new CduRenderer_default(this.renderer, this.binder);
       context.addPluginPageRoute(
